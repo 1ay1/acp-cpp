@@ -18,6 +18,7 @@
 #include <iostream>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 namespace {
 
@@ -55,6 +56,7 @@ int main() {
 
     std::shared_ptr<ClientConnection> agent_side;
     std::atomic<bool> worker_done{false};
+    std::thread worker;        // the deferred-prompt worker (joined at teardown)
 
     AgentHandlers a;
     a.on_initialize = [](const InitializeParams&) {
@@ -69,7 +71,7 @@ int main() {
     // for the client's answer, then resolves the prompt.
     a.on_session_prompt_async =
         [&](const PromptParams& p, RpcEngine::Responder<PromptResult> resp) {
-            std::thread([&, sid = p.sessionId, r = std::move(resp)]() mutable {
+            worker = std::thread([&, sid = p.sessionId, r = std::move(resp)]() mutable {
                 RequestPermissionParams rp;
                 rp.sessionId = sid;
                 rp.toolCall.toolCallId = ToolCallId{std::string("tc1")};
@@ -87,7 +89,7 @@ int main() {
 
                 worker_done.store(true);
                 r.ok(PromptResult{StopReason::EndTurn});
-            }).detach();
+            });
         };
     a.on_session_cancel = [](const CancelParams&) {};
 
@@ -108,14 +110,15 @@ int main() {
                           std::move(c));
 
     std::atomic<bool> alive{true};
+    std::vector<std::thread> pumps;
     auto pump = [&](Mailbox& mb, RpcEngine& dst) {
-        std::thread([&]{
+        pumps.emplace_back([&]{
             std::string line; bool closed = false;
             while (alive.load()) {
                 if (!mb.pop(line, closed)) { if (closed) return; continue; }
                 dst.feed_line(line);
             }
-        }).detach();
+        });
     };
     pump(client_to_agent, agent_side->engine());
     pump(agent_to_client, agent.engine());
@@ -136,6 +139,8 @@ int main() {
     alive.store(false);
     client_to_agent.close();
     agent_to_client.close();
+    if (worker.joinable()) worker.join();
+    for (auto& t : pumps) if (t.joinable()) t.join();
     std::cout << "async_prompt deferred-response OK\n";
     return 0;
 }

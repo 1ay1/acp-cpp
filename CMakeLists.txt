@@ -68,6 +68,11 @@ target_include_directories(acp INTERFACE
 target_compile_features(acp INTERFACE cxx_std_20)
 target_link_libraries(acp INTERFACE nlohmann_json::nlohmann_json)
 
+# The codec algebra instantiates a deep template tree per protocol type; on
+# MSVC a single TU that pulls in <acp/acp.hpp> can exceed the COFF section
+# limit (C1128). /bigobj raises it. Propagated to every consumer.
+target_compile_options(acp INTERFACE $<$<CXX_COMPILER_ID:MSVC>:/bigobj>)
+
 # -----------------------------------------------------------------------------
 # Install (covers both the hand-written headers and the generated version.hpp).
 # -----------------------------------------------------------------------------
@@ -132,14 +137,14 @@ endif()
 # -----------------------------------------------------------------------------
 option(ACP_BUILD_EXAMPLES "Build acp-cpp examples" ON)
 if (ACP_BUILD_EXAMPLES)
-    add_executable(echo_agent     examples/echo_agent.cpp)
-    add_executable(minimal_client examples/minimal_client.cpp)
-    target_link_libraries(echo_agent     PRIVATE acp::acp)
-    target_link_libraries(minimal_client PRIVATE acp::acp)
+    # echo_agent is portable (pure stdio).
+    add_executable(echo_agent examples/echo_agent.cpp)
+    target_link_libraries(echo_agent PRIVATE acp::acp)
     if (NOT WIN32)
-        target_link_libraries(echo_agent     PRIVATE pthread)
-        target_link_libraries(minimal_client PRIVATE pthread)
-        # Coroutine example uses POSIX fork/exec; gate on non-Windows.
+        target_link_libraries(echo_agent PRIVATE pthread)
+        # minimal_client + coro_client use POSIX fork/exec; non-Windows only.
+        add_executable(minimal_client examples/minimal_client.cpp)
+        target_link_libraries(minimal_client PRIVATE acp::acp pthread)
         add_executable(coro_client examples/coro_client.cpp)
         target_link_libraries(coro_client PRIVATE acp::acp pthread)
     endif()
