@@ -1,0 +1,15 @@
+# Build directories
+build/
+build-*/
+out/
+cmake-build-*/
+
+# Editor / tooling caches
+.cache/
+.vscode/
+.idea/
+compile_commands.json
+
+# OS junk
+.DS_Store
+Thumbs.db

@@ -1,0 +1,23 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// acp/version.hpp — GENERATED FROM cmake/version.hpp.in. Do not edit.
+//
+//   The single source of truth is `project(acp-cpp VERSION x.y.z)` in
+//   CMakeLists.txt; bumping it there propagates here at configure time.
+//
+#pragma once
+
+namespace acp {
+
+// Library semver. Reflects `project(... VERSION)` from CMakeLists.txt.
+inline constexpr int         kLibraryVersionMajor = @PROJECT_VERSION_MAJOR@;
+inline constexpr int         kLibraryVersionMinor = @PROJECT_VERSION_MINOR@;
+inline constexpr int         kLibraryVersionPatch = @PROJECT_VERSION_PATCH@;
+inline constexpr const char* kLibraryVersion      = "@PROJECT_VERSION@";
+
+// ACP wire protocol version (a single integer per the spec — bumped only on
+// breaking changes). Set in CMakeLists.txt via the ACP_PROTOCOL_VERSION cache
+// variable so library version and protocol version stay decoupled.
+inline constexpr int kProtocolVersion = @ACP_PROTOCOL_VERSION@;
+
+} // namespace acp
