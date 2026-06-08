@@ -115,7 +115,20 @@ public:
     explicit RpcEngine(Transport write) : write_(std::move(write)) {}
 
     // ---------------------------------------------------------------- handlers
-    using RawRequest      = std::function<Json(const Json&)>;
+    //
+    //   A request handler returns Maybe<Json>:
+    //     • Just(result)  → the engine writes {result} synchronously (the
+    //                        common, fully-synchronous case).
+    //     • Nothing       → the handler took ownership of the reply and will
+    //                        send it later from any thread via respond_raw()
+    //                        / respond_error_raw() using the captured RpcId.
+    //
+    //   The deferred path is what lets a long-running handler (e.g. an agent
+    //   driving a whole turn) hand the work to a worker thread WITHOUT blocking
+    //   the reader thread — so the engine stays free to read the responses to
+    //   any outbound requests (request_permission, fs/*, terminal/*) the turn
+    //   makes. Blocking inline would deadlock a single-reader transport.
+    using RawRequest      = std::function<Maybe<Json>(const RpcId&, const Json&)>;
     using RawNotification = std::function<void(const Json&)>;
 
     void on_request(std::string method, RawRequest h) {
@@ -131,10 +144,10 @@ public:
     template <class Params, class Result, class F>
     void on(std::string method, F handler) {
         on_request(std::move(method),
-            [h = std::move(handler)](const Json& j) -> Json {
+            [h = std::move(handler)](const RpcId&, const Json& j) -> Maybe<Json> {
                 Params p = j.is_null() ? Params{} : from_json<Params>(j);
                 Result r = h(p);
-                return to_json(r);
+                return Just<Json>(to_json(r));
             });
     }
     template <class Params, class F>
@@ -144,6 +157,69 @@ public:
                 Params p = j.is_null() ? Params{} : from_json<Params>(j);
                 h(p);
             });
+    }
+
+    // -------------------------------------------------- deferred (async) replies
+    //
+    //   Responder<Result> — a one-shot handle to a pending inbound request. The
+    //   async handler captures it, hands it to a worker, and the worker calls
+    //   .ok(result) or .error(...) when the work completes. Safe to move; the
+    //   reply is sent exactly once (subsequent calls are no-ops).
+    template <class Result>
+    class Responder {
+    public:
+        Responder(RpcEngine* e, RpcId id) : eng_(e), id_(std::move(id)) {}
+        Responder(Responder&& o) noexcept
+            : eng_(o.eng_), id_(std::move(o.id_)), done_(o.done_) { o.eng_ = nullptr; }
+        Responder& operator=(Responder&&) = delete;
+        Responder(const Responder&)        = delete;
+        Responder& operator=(const Responder&) = delete;
+
+        void ok(const Result& r) {
+            if (!eng_ || done_) return;
+            done_ = true;
+            if constexpr (std::is_same_v<Result, Unit>)
+                eng_->respond_raw(id_, Json::object());
+            else
+                eng_->respond_raw(id_, to_json(r));
+        }
+        void error(int code, std::string message, Json data = Json()) {
+            if (!eng_ || done_) return;
+            done_ = true;
+            eng_->respond_error_raw(id_, code, std::move(message), std::move(data));
+        }
+        void error(const RpcError& e) { error(e.code, e.what(), e.data); }
+        const RpcId& id() const noexcept { return id_; }
+
+    private:
+        RpcEngine* eng_;
+        RpcId      id_;
+        bool       done_ = false;
+    };
+
+    // Register a handler that answers asynchronously. The handler runs on the
+    // reader thread but returns immediately (void); it must move the Responder
+    // somewhere that eventually calls .ok()/.error(). The engine writes NO
+    // synchronous reply for this method.
+    template <class Params, class Result, class F>
+    void on_async(std::string method, F handler) {
+        on_request(std::move(method),
+            [this, h = std::move(handler)](const RpcId& id, const Json& j) -> Maybe<Json> {
+                Params p = j.is_null() ? Params{} : from_json<Params>(j);
+                h(p, Responder<Result>(this, id));
+                return Nothing;   // deferred — reply travels later
+            });
+    }
+
+    // Send a late reply to a previously-deferred request. Thread-safe; the
+    // write is serialised through the transport's sink.
+    void respond_raw(const RpcId& id, const Json& result) {
+        Json env = {{"jsonrpc", "2.0"}, {"id", id}, {"result", result}};
+        write_line(env.dump());
+    }
+    void respond_error_raw(const RpcId& id, int code, std::string message,
+                           Json data = Json()) {
+        send_error(id, code, std::move(message), std::move(data));
     }
 
     // ---------------------------------------------------------------- outbound
@@ -209,7 +285,10 @@ public:
         notify_raw(method, params);
     }
     void on_ext_request(std::string method, std::function<Json(const Json&)> h) {
-        on_request(std::move(method), std::move(h));
+        on_request(std::move(method),
+            [h = std::move(h)](const RpcId&, const Json& p) -> Maybe<Json> {
+                return Just<Json>(h(p));
+            });
     }
     void on_ext_notification(std::string method, std::function<void(const Json&)> h) {
         on_notification(std::move(method), std::move(h));
@@ -297,9 +376,9 @@ private:
         if (!h) {
             return send_error(id, errc::MethodNotFound, "Method not found: " + method);
         }
-        Json result;
+        Maybe<Json> result;
         try {
-            result = h(params);
+            result = h(id, params);
         } catch (const RpcError& e) {
             return send_error(id, e.code, e.what(), e.data);
         } catch (const CodecError& e) {
@@ -309,7 +388,9 @@ private:
         } catch (...) {
             return send_error(id, errc::InternalError, "unknown exception");
         }
-        Json env = {{"jsonrpc", "2.0"}, {"id", id}, {"result", std::move(result)}};
+        // Nothing ⇒ the handler deferred; it will send the reply itself later.
+        if (!result) return;
+        Json env = {{"jsonrpc", "2.0"}, {"id", id}, {"result", std::move(*result)}};
         write_line(env.dump());
     }
 

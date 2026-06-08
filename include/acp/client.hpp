@@ -44,6 +44,19 @@ struct AgentHandlers {
     std::function<PromptResult     (const PromptParams&)>      on_session_prompt;
     std::function<void             (const CancelParams&)>      on_session_cancel;
 
+    // Async variant of session/prompt. A prompt typically drives a whole
+    // agent turn — it streams session/update notifications and may call BACK
+    // to the client (session/request_permission, fs/*, terminal/*) before it
+    // can resolve. Those callbacks need the reader thread free to deliver
+    // their responses, so a synchronous prompt handler that blocks would
+    // deadlock a single-reader transport. Set this instead: the handler hands
+    // the Responder to a worker thread and returns immediately; the worker
+    // calls responder.ok(PromptResult{...}) when the turn settles.
+    //
+    //   If BOTH are set, the async one wins.
+    std::function<void (const PromptParams&,
+                        RpcEngine::Responder<PromptResult>)>  on_session_prompt_async;
+
     // -------- optional --------------------------------------------------
     std::function<Unit                  (const AuthenticateParams&)>     on_authenticate;
     std::function<Unit                  ()>                              on_logout;
@@ -133,7 +146,10 @@ private:
             engine_.on<NewSessionParams, NewSessionResult>(
                 std::string(method::SessionNew), std::move(h.on_session_new));
         }
-        if (h.on_session_prompt) {
+        if (h.on_session_prompt_async) {
+            engine_.on_async<PromptParams, PromptResult>(
+                std::string(method::SessionPrompt), std::move(h.on_session_prompt_async));
+        } else if (h.on_session_prompt) {
             engine_.on<PromptParams, PromptResult>(
                 std::string(method::SessionPrompt), std::move(h.on_session_prompt));
         }

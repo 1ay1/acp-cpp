@@ -89,6 +89,13 @@ if (ACP_BUILD_TESTS)
         target_link_libraries(acp_loopback PRIVATE pthread)
     endif()
     add_test(NAME loopback COMMAND acp_loopback)
+
+    add_executable(acp_async_prompt tests/async_prompt.cpp)
+    target_link_libraries(acp_async_prompt PRIVATE acp::acp)
+    if (NOT WIN32)
+        target_link_libraries(acp_async_prompt PRIVATE pthread)
+    endif()
+    add_test(NAME async_prompt COMMAND acp_async_prompt)
 endif()
 
 # -----------------------------------------------------------------------------
