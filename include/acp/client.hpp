@@ -83,6 +83,11 @@ public:
 
     RpcEngine& engine() noexcept { return engine_; }
 
+    // ------------------------------------------------------- observability
+    void set_wire_trace(WireTrace t)         { engine_.set_wire_trace(std::move(t)); }
+    void set_error_callback(ErrorCallback e) { engine_.set_error_callback(std::move(e)); }
+    void set_default_timeout(std::chrono::milliseconds d) { engine_.set_default_timeout(d); }
+
     // -------------------------------------------------------- outbound calls
 
     // The big one — Agent → Client streaming notifications.
@@ -90,30 +95,30 @@ public:
         engine_.notify(method::SessionUpdate, m);
     }
 
-    std::future<RequestPermissionResult> request_permission(const RequestPermissionParams& p) {
+    [[nodiscard]] std::future<RequestPermissionResult> request_permission(const RequestPermissionParams& p) {
         return engine_.request<RequestPermissionResult>(method::RequestPermission, p);
     }
 
-    std::future<ReadTextFileResult> fs_read_text_file(const ReadTextFileParams& p) {
+    [[nodiscard]] std::future<ReadTextFileResult> fs_read_text_file(const ReadTextFileParams& p) {
         return engine_.request<ReadTextFileResult>(method::FsReadTextFile, p);
     }
-    std::future<Unit> fs_write_text_file(const WriteTextFileParams& p) {
+    [[nodiscard]] std::future<Unit> fs_write_text_file(const WriteTextFileParams& p) {
         return engine_.request<Unit>(method::FsWriteTextFile, p);
     }
 
-    std::future<CreateTerminalResult> terminal_create(const CreateTerminalParams& p) {
+    [[nodiscard]] std::future<CreateTerminalResult> terminal_create(const CreateTerminalParams& p) {
         return engine_.request<CreateTerminalResult>(method::TerminalCreate, p);
     }
-    std::future<TerminalOutputResult> terminal_output(const TerminalOutputParams& p) {
+    [[nodiscard]] std::future<TerminalOutputResult> terminal_output(const TerminalOutputParams& p) {
         return engine_.request<TerminalOutputResult>(method::TerminalOutput, p);
     }
-    std::future<TerminalWaitForExitResult> terminal_wait_for_exit(const TerminalWaitForExitParams& p) {
+    [[nodiscard]] std::future<TerminalWaitForExitResult> terminal_wait_for_exit(const TerminalWaitForExitParams& p) {
         return engine_.request<TerminalWaitForExitResult>(method::TerminalWaitForExit, p);
     }
-    std::future<Unit> terminal_kill(const TerminalKillParams& p) {
+    [[nodiscard]] std::future<Unit> terminal_kill(const TerminalKillParams& p) {
         return engine_.request<Unit>(method::TerminalKill, p);
     }
-    std::future<Unit> terminal_release(const TerminalReleaseParams& p) {
+    [[nodiscard]] std::future<Unit> terminal_release(const TerminalReleaseParams& p) {
         return engine_.request<Unit>(method::TerminalRelease, p);
     }
 

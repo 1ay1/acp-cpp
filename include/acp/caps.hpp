@@ -16,7 +16,33 @@
 
 #include <acp/session_types.hpp>
 
+#include <stdexcept>
+
 namespace acp {
+
+//==============================================================================
+//  CapabilityError — thrown locally when a caller invokes a method whose
+//  capability the peer did not advertise at initialize. Caught early, before
+//  a round-trip, instead of waiting for the peer's MethodNotFound.
+//==============================================================================
+struct CapabilityError : std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
+
+//==============================================================================
+//  Protocol-version negotiation. Per the spec, peers agree on the minimum of
+//  the two supported versions. `negotiate_version` returns the version both
+//  sides can speak, or throws if there is no overlap (theirs is older than the
+//  oldest we support, i.e. < 1).
+//==============================================================================
+inline int negotiate_version(int ours, int theirs) {
+    int agreed = ours < theirs ? ours : theirs;
+    if (agreed < 1)
+        throw CapabilityError("no compatible ACP protocol version (peer offered " +
+                              std::to_string(theirs) + ", we support " +
+                              std::to_string(ours) + ")");
+    return agreed;
+}
 
 //==============================================================================
 //  Client capabilities  (FsCapabilities × terminal)

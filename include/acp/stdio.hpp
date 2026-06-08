@@ -54,16 +54,25 @@ public:
     }
 
     // Run the read pump on a dedicated thread. The pump terminates on EOF or
-    // when stop() is called.
+    // when stop() is called. On natural EOF (peer closed) the engine's
+    // on_transport_closed() fires, failing all in-flight requests with
+    // errc::ConnectionLost and invoking its error callback.
     void start(RpcEngine& engine) {
+        engine_ = &engine;
         running_.store(true, std::memory_order_release);
         reader_ = std::thread([this, &engine]{
             std::string line;
             while (running_.load(std::memory_order_acquire)) {
                 if (!std::getline(in_, line)) break;        // EOF or error
-                if (!line.empty()) engine.feed_line(line);
+                if (!line.empty()) {
+                    try { engine.feed_line(line); }
+                    catch (...) { /* never let one frame kill the pump */ }
+                }
             }
-            running_.store(false, std::memory_order_release);
+            const bool was_running = running_.exchange(false, std::memory_order_acq_rel);
+            // Only surface a transport-closed event if we stopped because the
+            // stream ended, not because stop() was called deliberately.
+            if (was_running) engine.on_transport_closed("eof");
         });
     }
 
@@ -87,6 +96,7 @@ private:
     std::mutex    write_mu_;
     std::thread   reader_;
     std::atomic<bool> running_{false};
+    RpcEngine*    engine_{nullptr};
 };
 
 } // namespace acp

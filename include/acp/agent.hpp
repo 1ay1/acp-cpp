@@ -69,48 +69,72 @@ public:
 
     RpcEngine& engine() noexcept { return engine_; }
 
+    // ------------------------------------------------------- observability
+    void set_wire_trace(WireTrace t)         { engine_.set_wire_trace(std::move(t)); }
+    void set_error_callback(ErrorCallback e) { engine_.set_error_callback(std::move(e)); }
+    void set_default_timeout(std::chrono::milliseconds d) { engine_.set_default_timeout(d); }
+
     // -------------------------------------------------------- outbound calls
 
-    std::future<InitializeResult> initialize(const InitializeParams& p) {
-        return engine_.request<InitializeResult>(method::Initialize, p);
+    // initialize negotiates the protocol version and caches the agent's
+    // advertised capabilities so later calls can be gated locally. Throws
+    // CapabilityError (via the future) if there is no compatible version.
+    [[nodiscard]] std::future<InitializeResult> initialize(const InitializeParams& p) {
+        auto raw = engine_.request<InitializeResult>(method::Initialize, p);
+        return std::async(std::launch::deferred,
+            [this, r = std::make_shared<std::future<InitializeResult>>(std::move(raw))]() mutable {
+                InitializeResult res = r->get();
+                (void)negotiate_version(kProtocolVersion, res.protocolVersion);
+                remember_negotiated(res);
+                return res;
+            });
     }
-    std::future<Unit> authenticate(const AuthenticateParams& p) {
+    [[nodiscard]] std::future<Unit> authenticate(const AuthenticateParams& p) {
         return engine_.request<Unit>(method::Authenticate, p);
     }
-    std::future<Unit> logout() {
+    [[nodiscard]] std::future<Unit> logout() {
+        require(negotiated_.has_value() &&
+                    negotiated_->agentCapabilities.auth.logout.has_value(),
+                "logout");
         return engine_.request<Unit>(method::Logout);
     }
 
-    std::future<NewSessionResult> session_new(const NewSessionParams& p) {
+    [[nodiscard]] std::future<NewSessionResult> session_new(const NewSessionParams& p) {
         return engine_.request<NewSessionResult>(method::SessionNew, p);
     }
-    std::future<Unit> session_load(const LoadSessionParams& p) {
+    [[nodiscard]] std::future<Unit> session_load(const LoadSessionParams& p) {
+        require(negotiated_.has_value() && negotiated_->agentCapabilities.loadSession,
+                "session/load");
         return engine_.request<Unit>(method::SessionLoad, p);
     }
-    std::future<ResumeSessionResult> session_resume(const ResumeSessionParams& p) {
+    [[nodiscard]] std::future<ResumeSessionResult> session_resume(const ResumeSessionParams& p) {
+        require(has_session_cap(&SessionCapabilities::resume), "session/resume");
         return engine_.request<ResumeSessionResult>(method::SessionResume, p);
     }
-    std::future<Unit> session_close(const CloseSessionParams& p) {
+    [[nodiscard]] std::future<Unit> session_close(const CloseSessionParams& p) {
+        require(has_session_cap(&SessionCapabilities::close), "session/close");
         return engine_.request<Unit>(method::SessionClose, p);
     }
-    std::future<Unit> session_delete(const DeleteSessionParams& p) {
+    [[nodiscard]] std::future<Unit> session_delete(const DeleteSessionParams& p) {
+        require(has_session_cap(&SessionCapabilities::deleteCap), "session/delete");
         return engine_.request<Unit>(method::SessionDelete, p);
     }
-    std::future<ListSessionsResult> session_list(const ListSessionsParams& p) {
+    [[nodiscard]] std::future<ListSessionsResult> session_list(const ListSessionsParams& p) {
+        require(has_session_cap(&SessionCapabilities::list), "session/list");
         return engine_.request<ListSessionsResult>(method::SessionList, p);
     }
 
-    std::future<PromptResult> session_prompt(const PromptParams& p) {
+    [[nodiscard]] std::future<PromptResult> session_prompt(const PromptParams& p) {
         return engine_.request<PromptResult>(method::SessionPrompt, p);
     }
     void session_cancel(const CancelParams& p) {
         engine_.notify(method::SessionCancel, p);
     }
 
-    std::future<Unit> session_set_mode(const SetModeParams& p) {
+    [[nodiscard]] std::future<Unit> session_set_mode(const SetModeParams& p) {
         return engine_.request<Unit>(method::SessionSetMode, p);
     }
-    std::future<SetConfigOptionResult> session_set_config_option(const SetConfigOptionParams& p) {
+    [[nodiscard]] std::future<SetConfigOptionResult> session_set_config_option(const SetConfigOptionParams& p) {
         return engine_.request<SetConfigOptionResult>(method::SessionSetConfig, p);
     }
 
@@ -122,21 +146,29 @@ public:
         engine_.ext_notify(m, p);
     }
 
-    // Capability negotiation result — cached after initialize() resolves so we
-    // can refuse to send capability-gated calls. Users can also poll directly.
+    // Capability negotiation result — cached automatically when initialize()'s
+    // future resolves, so capability-gated calls can be refused locally. Users
+    // may also poll this directly.
     void remember_negotiated(const InitializeResult& r) noexcept {
         negotiated_ = r;
     }
     const Maybe<InitializeResult>& negotiated() const noexcept { return negotiated_; }
 
 private:
+    // Throw CapabilityError unless `ok`. Used to gate capability-dependent calls
+    // before they hit the wire (the peer would otherwise reply MethodNotFound).
+    static void require(bool ok, const char* what) {
+        if (!ok)
+            throw CapabilityError(std::string("agent did not negotiate capability for '") +
+                                  what + "' (call initialize first / capability absent)");
+    }
+    bool has_session_cap(Maybe<Unit> SessionCapabilities::*cap) const {
+        return negotiated_.has_value() &&
+               (negotiated_->agentCapabilities.sessionCapabilities.*cap).has_value();
+    }
+
     void install_handlers(ClientHandlers h) {
-        auto bind_req = [&](std::string_view m, auto& slot) {
-            using P = typename std::decay_t<decltype(slot)>::argument_type;
-            // std::function::argument_type isn't standard; use the explicit form below.
-            (void)slot; (void)m;
-        };
-        // The actual installations — pattern: only register if the handler is set.
+        // Pattern: only register a handler that the user actually supplied.
         if (h.on_session_update) {
             engine_.on_note<SessionUpdateMsg>(std::string(method::SessionUpdate),
                 std::move(h.on_session_update));

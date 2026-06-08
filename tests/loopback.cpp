@@ -103,8 +103,9 @@ int main() {
 
     // -------- Pump threads --------------------------------------------------
     std::atomic<bool> alive{true};
+    std::vector<std::thread> pumps;
     auto pump = [&](Mailbox& mb, RpcEngine& dst) {
-        std::thread([&]{
+        pumps.emplace_back([&]{
             while (alive.load()) {
                 std::string line;
                 bool closed = false;
@@ -114,7 +115,7 @@ int main() {
                 }
                 dst.feed_line(line);
             }
-        }).detach();
+        });
     };
     pump(client_to_agent, agent_side.engine());
     pump(agent_to_client, agent.engine());
@@ -178,6 +179,7 @@ int main() {
     alive.store(false);
     client_to_agent.close();
     agent_to_client.close();
+    for (auto& t : pumps) if (t.joinable()) t.join();
 
     std::cout << "loopback integration OK\n";
     return 0;

@@ -85,8 +85,11 @@ template <class A> Codec<List<A>>  list_codec(Codec<A> inner);
 template <class A> Codec<Maybe<A>> maybe_codec(Codec<A> inner);
 template <class P, class A> Codec<Newtype<P, A>> newtype_codec();
 
+template <class T> const Codec<T>& codec();   // forward decl (cached accessor)
+
+// build_codec : construct the codec tree for T from scratch (the fold).
 template <class T>
-inline Codec<T> codec() {
+inline Codec<T> build_codec() {
     if constexpr (detail::is_maybe<T>::value) {
         using A = typename T::value_type;
         return maybe_codec<A>(codec<A>());
@@ -100,6 +103,21 @@ inline Codec<T> codec() {
     } else {
         return CodecOf<T>::get();
     }
+}
+
+// codec<T>() — returns a reference to a single, lazily-built, immutable codec
+// per type. Building a codec allocates a tree of std::functions; doing that on
+// every encode/decode of every message was the library's biggest hot-path
+// cost. The Meyers-singleton here makes it a one-time cost: subsequent calls
+// are a plain reference return, and nested codecs share the same cached nodes.
+//
+// Thread-safety: function-local static initialisation is guaranteed exactly
+// once by the standard ([stmt.dcl]/4); the codec is const thereafter, so
+// concurrent encode/decode from multiple threads is safe.
+template <class T>
+inline const Codec<T>& codec() {
+    static const Codec<T> instance = build_codec<T>();
+    return instance;
 }
 
 // Call-site sugar.

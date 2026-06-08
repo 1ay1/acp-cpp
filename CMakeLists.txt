@@ -17,6 +17,24 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # -----------------------------------------------------------------------------
+# Optional sanitizers (ASan/UBSan together, or TSan). The threading in the RPC
+# engine + stdio transport makes TSan especially valuable in CI.
+# -----------------------------------------------------------------------------
+set(ACP_SANITIZE "" CACHE STRING "Sanitizer: '', 'address', 'thread', or 'undefined'")
+if (ACP_SANITIZE)
+    if (ACP_SANITIZE STREQUAL "address")
+        add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer -g)
+        add_link_options(-fsanitize=address,undefined)
+    elseif (ACP_SANITIZE STREQUAL "thread")
+        add_compile_options(-fsanitize=thread -fno-omit-frame-pointer -g)
+        add_link_options(-fsanitize=thread)
+    elseif (ACP_SANITIZE STREQUAL "undefined")
+        add_compile_options(-fsanitize=undefined -fno-omit-frame-pointer -g)
+        add_link_options(-fsanitize=undefined)
+    endif()
+endif()
+
+# -----------------------------------------------------------------------------
 # Generated version.hpp — single source of truth is project(... VERSION).
 # -----------------------------------------------------------------------------
 set(ACP_GENERATED_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/include")
@@ -96,6 +114,17 @@ if (ACP_BUILD_TESTS)
         target_link_libraries(acp_async_prompt PRIVATE pthread)
     endif()
     add_test(NAME async_prompt COMMAND acp_async_prompt)
+
+    add_executable(acp_engine_features tests/engine_features.cpp)
+    target_link_libraries(acp_engine_features PRIVATE acp::acp)
+    if (NOT WIN32)
+        target_link_libraries(acp_engine_features PRIVATE pthread)
+    endif()
+    add_test(NAME engine_features COMMAND acp_engine_features)
+
+    add_executable(acp_schema_conformance tests/schema_conformance.cpp)
+    target_link_libraries(acp_schema_conformance PRIVATE acp::acp)
+    add_test(NAME schema_conformance COMMAND acp_schema_conformance)
 endif()
 
 # -----------------------------------------------------------------------------
@@ -110,5 +139,8 @@ if (ACP_BUILD_EXAMPLES)
     if (NOT WIN32)
         target_link_libraries(echo_agent     PRIVATE pthread)
         target_link_libraries(minimal_client PRIVATE pthread)
+        # Coroutine example uses POSIX fork/exec; gate on non-Windows.
+        add_executable(coro_client examples/coro_client.cpp)
+        target_link_libraries(coro_client PRIVATE acp::acp pthread)
     endif()
 endif()

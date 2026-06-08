@@ -28,6 +28,8 @@
 #include <acp/codec.hpp>
 
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <exception>
 #include <functional>
@@ -36,6 +38,7 @@
 #include <mutex>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <unordered_map>
 #include <utility>
 #include <variant>
@@ -52,6 +55,9 @@ inline constexpr int MethodNotFound = -32601;
 inline constexpr int InvalidParams  = -32602;
 inline constexpr int InternalError  = -32603;
 inline constexpr int AuthRequired   = -32000;   // ACP convention
+inline constexpr int Timeout        = -32001;   // request deadline exceeded
+inline constexpr int Cancelled      = -32002;   // request cancelled locally
+inline constexpr int ConnectionLost = -32003;   // transport closed mid-flight
 } // namespace errc
 
 //==============================================================================
@@ -89,6 +95,23 @@ template <> struct CodecOf<RpcError> {
 using Transport = std::function<void(std::string_view)>;
 
 //==============================================================================
+//  Observability hooks.
+//
+//      WireTrace   — called for every frame crossing the boundary, in both
+//                    directions, with the raw JSON text. Wire it to a logger
+//                    to debug a protocol exchange. Never throws into the engine
+//                    (the engine swallows exceptions from the hook).
+//
+//      ErrorCallback — called when the engine detects a transport-level or
+//                    dispatch-level fault that isn't tied to a single in-flight
+//                    request (e.g. the reader thread hit EOF or an exception).
+//                    A clean EOF reports errc::ConnectionLost with "eof".
+//==============================================================================
+enum class WireDir { Inbound, Outbound };
+using WireTrace     = std::function<void(WireDir, std::string_view)>;
+using ErrorCallback = std::function<void(int code, std::string_view message)>;
+
+//==============================================================================
 //  RpcEngine — bidirectional JSON-RPC dispatcher.
 //
 //      Handler registration is partitioned by whether the message has an id:
@@ -113,6 +136,23 @@ using Transport = std::function<void(std::string_view)>;
 class RpcEngine {
 public:
     explicit RpcEngine(Transport write) : write_(std::move(write)) {}
+
+    ~RpcEngine() { stop_timer(); }
+
+    RpcEngine(const RpcEngine&)            = delete;
+    RpcEngine& operator=(const RpcEngine&) = delete;
+
+    // ---------------------------------------------------------- observability
+    // Install a wire tracer (every inbound/outbound frame) and/or an error
+    // callback (transport faults not tied to one request). Both are optional.
+    void set_wire_trace(WireTrace t)    { std::lock_guard lk(mu_); trace_ = std::move(t); }
+    void set_error_callback(ErrorCallback e) { std::lock_guard lk(mu_); on_error_ = std::move(e); }
+
+    // Default deadline applied to every typed/raw request that doesn't pass an
+    // explicit timeout. Zero (the default) means "wait forever".
+    void set_default_timeout(std::chrono::milliseconds d) {
+        default_timeout_.store(d.count(), std::memory_order_relaxed);
+    }
 
     // ---------------------------------------------------------------- handlers
     //
@@ -239,34 +279,66 @@ public:
     void notify(std::string_view method) { notify_raw(method, Json::object()); }
 
     // Raw request — returns the future as raw Json.
-    std::future<Json> request_raw(std::string_view method, const Json& params) {
+    //
+    //   `timeout` of zero means "use the engine default" (set_default_timeout);
+    //   if that is also zero the request waits forever. A non-zero timeout that
+    //   elapses before a response fails the future with RpcError(errc::Timeout).
+    //
+    //   The returned future is backed DIRECTLY by the promise the reader thread
+    //   fulfils — not a deferred std::async — so wait_for / wait_until behave
+    //   correctly (a deferred future would report `deferred` and never block).
+    std::future<Json> request_raw(std::string_view method, const Json& params,
+                                  std::chrono::milliseconds timeout = std::chrono::milliseconds::zero()) {
         std::int64_t id = next_id_.fetch_add(1, std::memory_order_relaxed);
+        Json id_json = id;
+        std::string key = id_json.dump();
+
         auto promise = std::make_shared<std::promise<Json>>();
         std::future<Json> fut = promise->get_future();
+
+        long long ms = timeout.count();
+        if (ms == 0) ms = default_timeout_.load(std::memory_order_relaxed);
+        const bool has_deadline = ms > 0;
+        const auto deadline = std::chrono::steady_clock::now() +
+                              std::chrono::milliseconds(ms);
         {
             std::lock_guard lk(mu_);
-            waiters_.emplace(id, std::move(promise));
+            Waiter w;
+            w.promise      = std::move(promise);
+            w.has_deadline = has_deadline;
+            w.deadline     = deadline;
+            waiters_.emplace(std::move(key), std::move(w));
         }
+        if (has_deadline) ensure_timer();
+
         Json env = {{"jsonrpc", "2.0"}, {"id", id}, {"method", std::string(method)}};
         if (!params.is_null()) env["params"] = params;
         write_line(env.dump());
+        if (has_deadline) timer_cv_.notify_all();
         return fut;
     }
     // Typed request : Params → future<Result>.
     template <class Result, class Params>
-    std::future<Result> request(std::string_view method, const Params& params) {
-        auto raw = request_raw(method, to_json(params));
+    std::future<Result> request(std::string_view method, const Params& params,
+                                std::chrono::milliseconds timeout = std::chrono::milliseconds::zero()) {
+        auto raw = std::make_shared<std::future<Json>>(
+            request_raw(method, to_json(params), timeout));
+        // A deferred wrapper here is fine: it only performs the cheap decode
+        // step; the actual blocking happens inside raw->get(), which is backed
+        // by a real promise (so timed waits on the wrapper still work via the
+        // underlying shared state once .get() is reached).
         return std::async(std::launch::deferred,
-            [r = std::move(raw)]() mutable -> Result {
-                Json j = r.get();
+            [raw]() -> Result {
+                Json j = raw->get();
                 if constexpr (std::is_same_v<Result, Unit>) return Unit{};
                 else return j.is_null() ? Result{} : from_json<Result>(j);
             });
     }
     // Result-only typed request (no params).
     template <class Result>
-    std::future<Result> request(std::string_view method) {
-        return request<Result, Unit>(method, Unit{});
+    std::future<Result> request(std::string_view method,
+                                std::chrono::milliseconds timeout = std::chrono::milliseconds::zero()) {
+        return request<Result, Unit>(method, Unit{}, timeout);
     }
 
     // ------------------------------------------------------------- ext methods
@@ -298,6 +370,7 @@ public:
     // Feed a single received line (one JSON-RPC envelope, exactly).
     void feed_line(std::string_view line) {
         if (line.empty()) return;
+        emit_trace(WireDir::Inbound, line);
         Json msg;
         try {
             msg = Json::parse(line);
@@ -312,20 +385,31 @@ public:
         }
     }
 
+    // Report a transport-level fault (EOF, reader exception). The supplied
+    // transports call this when the read pump stops. Fails every in-flight
+    // request and notifies the error callback. Idempotent in effect.
+    void on_transport_closed(std::string reason = "connection closed") {
+        report_error(errc::ConnectionLost, reason);
+        shutdown(std::move(reason), errc::ConnectionLost);
+    }
+
     // ------------------------------------------------------------- lifecycle
     // Cancel every outstanding outbound request with an error. Idempotent.
-    void shutdown(std::string reason = "engine shutdown") {
-        std::unordered_map<std::int64_t, std::shared_ptr<std::promise<Json>>> taken;
+    void shutdown(std::string reason = "engine shutdown",
+                  int code = errc::InternalError) {
+        std::unordered_map<std::string, Waiter> taken;
         {
             std::lock_guard lk(mu_);
             taken.swap(waiters_);
         }
-        for (auto& [id, p] : taken) {
+        for (auto& [id, w] : taken) {
+            if (!w.promise) continue;
             try {
-                p->set_exception(std::make_exception_ptr(
-                    RpcError(errc::InternalError, reason)));
+                w.promise->set_exception(std::make_exception_ptr(
+                    RpcError(code, reason)));
             } catch (...) {}
         }
+        stop_timer();
     }
 
 private:
@@ -334,6 +418,7 @@ private:
         // Spec: each frame is one JSON-RPC envelope with NO embedded newlines.
         // nlohmann::json::dump() never inserts literal '\n' (we don't pass
         // pretty-print). The transport appends framing.
+        emit_trace(WireDir::Outbound, s);
         if (write_) write_(s);
     }
 
@@ -408,23 +493,20 @@ private:
     }
 
     void handle_response(const Json& msg) {
-        // We always serialise id as int64; accept string ids by coercion.
-        std::int64_t key = 0;
-        const auto& id = msg.at("id");
-        if (id.is_number_integer()) key = id.get<std::int64_t>();
-        else if (id.is_string()) {
-            try { key = std::stoll(id.get<std::string>()); } catch (...) { return; }
-        } else return;
+        // Key on the canonical text form of the id (id.dump()). This matches
+        // exactly how request_raw stored the waiter, so number ids, string ids,
+        // and any other valid id resolve correctly — no coercion, no leak.
+        const std::string key = msg.at("id").dump();
 
         std::shared_ptr<std::promise<Json>> p;
         {
             std::lock_guard lk(mu_);
             if (auto it = waiters_.find(key); it != waiters_.end()) {
-                p = std::move(it->second);
+                p = std::move(it->second.promise);
                 waiters_.erase(it);
             }
         }
-        if (!p) return;   // dropped: unknown id
+        if (!p) return;   // dropped: unknown / already-resolved id
 
         try {
             if (msg.contains("error")) {
@@ -436,12 +518,97 @@ private:
         } catch (const std::future_error&) { /* already satisfied */ }
     }
 
+    // ----------------------------------------------------------- hooks/timer
+    void emit_trace(WireDir dir, std::string_view frame) {
+        WireTrace t;
+        { std::lock_guard lk(mu_); t = trace_; }
+        if (t) { try { t(dir, frame); } catch (...) {} }
+    }
+    void report_error(int code, std::string_view msg) {
+        ErrorCallback e;
+        { std::lock_guard lk(mu_); e = on_error_; }
+        if (e) { try { e(code, msg); } catch (...) {} }
+    }
+
+    // Start the deadline-monitor thread once, on the first timed request.
+    void ensure_timer() {
+        bool expected = false;
+        if (!timer_started_.compare_exchange_strong(expected, true,
+                                                    std::memory_order_acq_rel))
+            return;   // already started
+        timer_running_.store(true, std::memory_order_release);
+        timer_thread_ = std::thread([this] { timer_loop(); });
+    }
+
+    void stop_timer() {
+        if (!timer_started_.load(std::memory_order_acquire)) return;
+        timer_running_.store(false, std::memory_order_release);
+        timer_cv_.notify_all();
+        if (timer_thread_.joinable() &&
+            timer_thread_.get_id() != std::this_thread::get_id())
+            timer_thread_.join();
+    }
+
+    // Wakes on the nearest deadline; fails any waiter whose deadline passed.
+    void timer_loop() {
+        std::unique_lock lk(mu_);
+        while (timer_running_.load(std::memory_order_acquire)) {
+            auto now = std::chrono::steady_clock::now();
+            auto next = std::chrono::steady_clock::time_point::max();
+            bool any = false;
+
+            for (auto it = waiters_.begin(); it != waiters_.end(); ) {
+                auto& w = it->second;
+                if (!w.has_deadline) { ++it; continue; }
+                if (w.deadline <= now) {
+                    auto p = std::move(w.promise);
+                    it = waiters_.erase(it);
+                    if (p) {
+                        try {
+                            p->set_exception(std::make_exception_ptr(
+                                RpcError(errc::Timeout, "request timed out")));
+                        } catch (...) {}
+                    }
+                } else {
+                    any = true;
+                    if (w.deadline < next) next = w.deadline;
+                    ++it;
+                }
+            }
+
+            if (any) timer_cv_.wait_until(lk, next);
+            else     timer_cv_.wait(lk);
+        }
+    }
+
     Transport write_;
     std::atomic<std::int64_t> next_id_{1};
     std::mutex mu_;
     std::unordered_map<std::string, RawRequest>      requests_;
     std::unordered_map<std::string, RawNotification> notifications_;
-    std::unordered_map<std::int64_t, std::shared_ptr<std::promise<Json>>> waiters_;
+
+    // A pending outbound request: its promise plus an optional deadline. Keyed
+    // by the CANONICAL string form of the JSON-RPC id (id.dump()), so string
+    // ids, integer ids, and any other valid id round-trip exactly and never
+    // leak a waiter on an unexpected echo.
+    struct Waiter {
+        std::shared_ptr<std::promise<Json>> promise;
+        std::chrono::steady_clock::time_point deadline{};   // zero == none
+        bool has_deadline = false;
+        bool done = false;
+    };
+    std::unordered_map<std::string, Waiter> waiters_;
+
+    WireTrace     trace_;
+    ErrorCallback on_error_;
+    std::atomic<long long> default_timeout_{0};   // ms; 0 == no timeout
+
+    // Deadline monitor — a lazily-started background thread that fails any
+    // waiter whose deadline has passed. Started on the first timed request.
+    std::thread             timer_thread_;
+    std::condition_variable timer_cv_;
+    std::atomic<bool>       timer_running_{false};
+    std::atomic<bool>       timer_started_{false};
 };
 
 } // namespace acp

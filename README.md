@@ -30,10 +30,43 @@ The library is **four layers**, each smaller than the last:
 |------|---------|------|
 | **1. Algebra**  | `core.hpp`, `codec.hpp` | `Unit`, `Maybe<A>`, `List<A>`, `Sum<…>`, `Newtype<P,A>`, and the codec combinators `record`, `sum_tagged`, `enum_codec`, `list_codec`, `maybe_codec`, `meta` |
 | **2. Schema**   | `ids.hpp`, `content.hpp`, `tools.hpp`, `session_types.hpp`, `updates.hpp`, `caps.hpp`, `methods.hpp` | Every ACP type as a closed algebraic expression in layer 1 — never any hand-written `to_json` |
-| **3. Engine**   | `rpc.hpp` | JSON-RPC 2.0 dispatcher: typed `request<Result, Params>` → `std::future<Result>`, typed `on<Params, Result>(handler)`, full bidirectional |
+| **3. Engine**   | `rpc.hpp` | JSON-RPC 2.0 dispatcher: typed `request<Result, Params>` → `std::future<Result>`, typed `on<Params, Result>(handler)`, full bidirectional, per-request timeouts, wire-tracing + error hooks |
 | **4. Transport / Facade** | `stdio.hpp`, `agent.hpp`, `client.hpp` | Line-framed stdio + two role facades: `AgentConnection` (editor side) and `ClientConnection` (agent side) |
+| **5. Coroutines** *(opt-in)* | `coro.hpp` | `Task<T>` + `co_await` over any returned `std::future<T>` |
 
-Single include is `<acp/acp.hpp>`.
+Single include is `<acp/acp.hpp>` (layers 1–4). Add `<acp/coro.hpp>` for the
+coroutine surface — it is intentionally NOT pulled in by the umbrella header, so
+you pay nothing for coroutines unless you ask for them.
+
+---
+
+## Engineering guarantees
+
+Beyond spec coverage, the engine is built for production use:
+
+- **Codec caching** — `codec<T>()` builds each type's codec tree exactly once
+  (function-local `static`) and returns a reference; encode/decode no longer
+  allocate a fresh `std::function` tree per message.
+- **Per-request timeouts** — `request(..., 5s)` or `set_default_timeout(...)`;
+  an elapsed deadline fails the future with `RpcError(errc::Timeout)`. A lazy
+  background monitor thread starts only when the first timed request is made.
+- **Promise-backed futures** — `request_raw(...)` returns a future fulfilled
+  directly by the reader thread, so `wait_for` / `wait_until` work correctly
+  (a `std::async(deferred)` future would report `deferred` and never block).
+- **Robust id handling** — in-flight requests are keyed on the canonical text
+  form of the JSON-RPC id (`id.dump()`), so string ids, integer ids, and any
+  other valid id round-trip exactly. No coercion, no leaked waiters.
+- **Connection-loss + error surface** — `set_error_callback(...)` and, on the
+  stdio transport, EOF fires `on_transport_closed`, failing every in-flight
+  request with `errc::ConnectionLost`.
+- **Wire tracing** — `set_wire_trace([](WireDir, std::string_view){ ... })` sees
+  every frame in both directions for debugging.
+- **Capability + version gating** — `initialize` negotiates the protocol
+  version and caches the peer's capabilities; capability-gated calls
+  (`session_resume`, `logout`, …) throw `CapabilityError` locally instead of
+  doing a round-trip to learn `MethodNotFound`.
+- **Race-free** — the full test suite passes clean under ThreadSanitizer and
+  ASan/UBSan (`-DACP_SANITIZE=thread|address`).
 
 ---
 
@@ -187,6 +220,39 @@ actually spawns a child agent process.
 
 ---
 
+## Usage: coroutines
+
+Include `<acp/coro.hpp>` and the same handshake reads as straight-line code —
+each `co_await` suspends until the reply lands, without blocking a thread:
+
+```cpp
+#include <acp/acp.hpp>
+#include <acp/coro.hpp>
+using namespace acp;
+
+Task<void> drive(AgentConnection& agent) {
+    auto ir   = co_await agent.initialize(ip);
+    auto sess = co_await agent.session_new({".", {}, Nothing});
+    PromptParams pp; pp.sessionId = sess.sessionId;
+    pp.prompt.push_back(TextContent{"hello", Nothing, Json::object()});
+    auto pr   = co_await agent.session_prompt(pp);
+    // pr.stopReason ...
+    co_return;
+}
+
+int main() {
+    /* wire up transport + AgentConnection as usual */
+    drive(agent).get();   // synchronous entry point for non-coroutine callers
+}
+```
+
+`co_await` works on any `std::future<T>` the API returns; `Task<T>` composes,
+so tasks can `co_await` other tasks. See `examples/coro_client.cpp` for the full
+runnable version. The blocking bridge (`Task::get()`) is synchronized, not a
+busy-spin — it passes ThreadSanitizer clean.
+
+---
+
 ## Building
 
 Requirements: a C++20 compiler (GCC 12+, Clang 15+, MSVC 19.30+) and CMake 3.20+.
@@ -196,6 +262,13 @@ The build pulls `nlohmann/json` via `FetchContent`. No other dependencies.
 cmake -S . -B build -G Ninja
 cmake --build build -j
 ctest --test-dir build --output-on-failure
+```
+
+To run the suite under sanitizers (CI does both on every push):
+
+```sh
+cmake -S . -B build-tsan -G Ninja -DACP_SANITIZE=thread     # ThreadSanitizer
+cmake -S . -B build-asan -G Ninja -DACP_SANITIZE=address    # ASan + UBSan
 ```
 
 Use it from another CMake project:
@@ -242,10 +315,12 @@ on each type that defines it. Empty `_meta` is omitted from the wire per spec;
 the terminal `Unit` responses (logout/authenticate/write/kill/release, etc.)
 tolerate and ignore any `_meta` a peer attaches.
 
-Optional capabilities are gated at runtime by inspecting
-`AgentConnection::negotiated()` / `ClientConnection::negotiated()` after
-`initialize`. Sending a method whose capability wasn't negotiated returns
-JSON-RPC `MethodNotFound` from the peer.
+Optional capabilities are gated **locally** by the facades: `initialize`
+negotiates the protocol version and caches the peer's advertised capabilities,
+so a capability-gated call (`session_resume`, `session_load`, `logout`, …)
+throws `CapabilityError` before it ever hits the wire — no round-trip to learn
+the peer would have answered `MethodNotFound`. You can still inspect
+`AgentConnection::negotiated()` / `ClientConnection::negotiated()` directly.
 
 ---
 
@@ -269,16 +344,20 @@ include/acp/
   stdio.hpp            ← line-framed stdio transport
   agent.hpp            ← AgentConnection (editor uses this)
   client.hpp           ← ClientConnection (agent uses this)
+  coro.hpp             ← Task<T> + co_await over std::future (opt-in)
 
 examples/
   echo_agent.cpp       ← minimal but real agent
   minimal_client.cpp   ← POSIX client that spawns an agent and drives a turn
+  coro_client.cpp      ← the same client written with C++20 coroutines
 
 tests/
   kernel_smoke.cpp     ← codec algebra round-trips
   content_smoke.cpp    ← ContentBlock round-trips
   spec_round_trip.cpp  ← every method's Params/Result round-trips
   loopback.cpp         ← two engines, two threads, one real protocol exchange
+  engine_features.cpp  ← timeouts, id keying, tracing, gating, coroutines
+  schema_conformance.cpp ← wire-spelling + _meta-omission invariants
 ```
 
 ---
@@ -287,7 +366,9 @@ tests/
 
 Early. The API is in flux until a few real downstream users have shaken it out.
 The protocol coverage is complete for ACP v1; the engine + stdio transport pass
-a real loopback integration test; the umbrella header pulls everything in.
+a real loopback integration test plus a dedicated engine-features suite, and the
+whole suite is clean under ThreadSanitizer and ASan/UBSan in CI across
+GCC/Clang/MSVC. The coroutine layer is opt-in.
 
 PRs welcome — start with an issue describing the use case.
 
