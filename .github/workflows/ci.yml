@@ -44,8 +44,12 @@ jobs:
         run: cmake -S . -B build
       - name: Build
         run: cmake --build build -j
-      - name: Test
+      - name: Test (unix)
+        if: runner.os != 'Windows'
         run: ctest --test-dir build --output-on-failure
+      - name: Test (windows)
+        if: runner.os == 'Windows'
+        run: ctest --test-dir build -C Debug --output-on-failure
 
   # ---------------------------------------------------------------- sanitizers
   sanitize:
