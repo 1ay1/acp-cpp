@@ -193,6 +193,28 @@ public:
         return request<Result, Unit>(method, Unit{});
     }
 
+    // ------------------------------------------------------------- ext methods
+    //
+    //   ExtRequest / ExtNotification escape hatches — send/receive any custom
+    //   method that is not part of the spec. Convention: method names starting
+    //   with "_" are reserved for ext use.
+    //
+    //   These are thin wrappers over request_raw / notify_raw / on_request /
+    //   on_notification, but they make the intent explicit at call sites.
+    //
+    std::future<Json> ext_request(std::string_view method, const Json& params = Json::object()) {
+        return request_raw(method, params);
+    }
+    void ext_notify(std::string_view method, const Json& params = Json::object()) {
+        notify_raw(method, params);
+    }
+    void on_ext_request(std::string method, std::function<Json(const Json&)> h) {
+        on_request(std::move(method), std::move(h));
+    }
+    void on_ext_notification(std::string method, std::function<void(const Json&)> h) {
+        on_notification(std::move(method), std::move(h));
+    }
+
     // -------------------------------------------------------------- inbound
     // Feed a single received line (one JSON-RPC envelope, exactly).
     void feed_line(std::string_view line) {

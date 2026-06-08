@@ -161,6 +161,19 @@ int main() {
     agent.session_cancel(CancelParams{ns.sessionId});
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
 
+    // Exercise ext-method round-trip in both directions.
+    agent_side.engine().on_ext_request("_my/ping", [](const Json& p) -> Json {
+        return Json{{"echo", p}};
+    });
+    std::atomic<int> notes{0};
+    agent_side.engine().on_ext_notification("_my/note", [&](const Json&) { ++notes; });
+
+    auto pong = agent.ext_request("_my/ping", Json{{"x",42}}).get();
+    assert(pong["echo"]["x"] == 42);
+    agent.ext_notify("_my/note", Json{{"k","v"}});
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    assert(notes.load() == 1);
+
     // Tear down.
     alive.store(false);
     client_to_agent.close();

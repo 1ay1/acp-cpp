@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 project(acp-cpp
-        VERSION       0.1.0
+        VERSION       0.2.0
         DESCRIPTION   "Agent Client Protocol — modern C++20 implementation"
         LANGUAGES     CXX)
 

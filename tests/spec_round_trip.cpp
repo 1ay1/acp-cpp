@@ -128,6 +128,61 @@ int main() {
         round_trip(tr, "TerminalOutputResult");
     }
 
+    // -----  v0.2.0 additions: spec-coverage drift fixes  -----
+
+    // current_mode_update uses field name `currentModeId` on the wire.
+    {
+        SessionUpdateMsg m;
+        m.sessionId = SessionId{std::string("s")};
+        m.update = SU_CurrentMode{SessionModeId{std::string("focus")}};
+        Json j = to_json(m);
+        assert(j["update"]["currentModeId"] == "focus");
+        round_trip(m, "SessionUpdate.current_mode_update");
+    }
+
+    // Annotations is now a real record (audience, lastModified, priority).
+    {
+        TextContent t;
+        t.text = "hi";
+        Annotations ann;
+        ann.audience  = Just<List<Role>>({Role::Assistant, Role::User});
+        ann.priority  = Just<double>(0.9);
+        ann.lastModified = Just<std::string>("2025-01-01T00:00:00Z");
+        t.annotations = Just(ann);
+        ContentBlock cb = t;
+        round_trip(cb, "ContentBlock.text+annotations");
+        Json j = to_json(cb);
+        assert(j["annotations"]["audience"][0] == "assistant");
+        assert(j["annotations"]["priority"]    == 0.9);
+    }
+
+    // ConfigOption.options now models the SessionConfigSelectOptions sum.
+    {
+        // Ungrouped
+        ConfigOption co;
+        co.id = "model"; co.name = "Model"; co.category = Just<std::string>("model");
+        co.currentValue = "gpt-5";
+        co.options = ConfigSelectOptions{CSO_Ungrouped{{
+            {"gpt-5", "GPT-5", Nothing, Json::object()},
+            {"o4-mini", "o4-mini", Just<std::string>("smaller/cheap"), Json::object()}}}};
+        round_trip(co, "ConfigOption.ungrouped");
+        // Grouped
+        ConfigOption cg;
+        cg.id = "model"; cg.name = "Model"; cg.currentValue = "gpt-5";
+        cg.options = ConfigSelectOptions{CSO_Grouped{{
+            {"openai", "OpenAI", {{"gpt-5","GPT-5",Nothing,Json::object()}}, Json::object()},
+            {"anthropic", "Anthropic", {{"claude-4","Claude 4",Nothing,Json::object()}}, Json::object()}}}};
+        round_trip(cg, "ConfigOption.grouped");
+    }
+
+    // AvailableCommandInput is now a forward-compatible tagged sum.
+    {
+        AvailableCommand c;
+        c.name = "diff"; c.description = "Show a diff";
+        c.input = Just(AvailableCommandInput{UnstructuredCommandInput{"<path>", Json::object()}});
+        round_trip(c, "AvailableCommand+unstructured-input");
+    }
+
     std::cout << "all spec round-trips OK\n";
     return 0;
 }

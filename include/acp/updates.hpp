@@ -41,7 +41,7 @@ struct SU_ToolCall           { ToolCall       toolCall; };
 struct SU_ToolCallUpdate     { ToolCallUpdate update;   };
 
 struct SU_AvailableCommands  { List<AvailableCommand> availableCommands; };
-struct SU_CurrentMode        { SessionModeId modeId; };
+struct SU_CurrentMode        { SessionModeId currentModeId; };
 struct SU_ConfigOptions      { List<ConfigOption> configOptions; };
 
 struct SU_SessionInfo {
@@ -123,7 +123,7 @@ template <> struct CodecOf<SU_AvailableCommands> {
 };
 template <> struct CodecOf<SU_CurrentMode> {
     static Codec<SU_CurrentMode> get() {
-        return record<SU_CurrentMode>(required("modeId", &SU_CurrentMode::modeId));
+        return record<SU_CurrentMode>(required("currentModeId", &SU_CurrentMode::currentModeId));
     }
 };
 template <> struct CodecOf<SU_ConfigOptions> {

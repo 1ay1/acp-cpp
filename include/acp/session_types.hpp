@@ -148,29 +148,79 @@ template <> struct CodecOf<SessionModeState> {
 
 //==============================================================================
 //  Session config options (the modern, preferred replacement for modes).
+//
+//  Wire shape:
+//    { id, name, description?, category?, type: "select",
+//      currentValue, options : SessionConfigSelectOptions, _meta }
+//
+//  SessionConfigSelectOptions = List<ConfigSelectOption>       (Ungrouped)
+//                             | List<ConfigSelectGroup>        (Grouped)
+//  The two arms disambiguate by whether the array items carry `group`.
 //==============================================================================
-struct ConfigOptionValue {
-    std::string value;
+struct ConfigSelectOption {
+    std::string value;                // SessionConfigValueId
     std::string name;
     Maybe<std::string> description;
+    Json meta = Json::object();
 };
-template <> struct CodecOf<ConfigOptionValue> {
-    static Codec<ConfigOptionValue> get() {
-        return record<ConfigOptionValue>(
-            required ("value",       &ConfigOptionValue::value),
-            required ("name",        &ConfigOptionValue::name),
-            optional ("description", &ConfigOptionValue::description));
+template <> struct CodecOf<ConfigSelectOption> {
+    static Codec<ConfigSelectOption> get() {
+        return record<ConfigSelectOption>(
+            required ("value",       &ConfigSelectOption::value),
+            required ("name",        &ConfigSelectOption::name),
+            optional ("description", &ConfigSelectOption::description),
+            meta("_meta",       &ConfigSelectOption::meta));
+    }
+};
+
+struct ConfigSelectGroup {
+    std::string group;                // SessionConfigGroupId
+    std::string name;
+    List<ConfigSelectOption> options;
+    Json meta = Json::object();
+};
+template <> struct CodecOf<ConfigSelectGroup> {
+    static Codec<ConfigSelectGroup> get() {
+        return record<ConfigSelectGroup>(
+            required ("group",   &ConfigSelectGroup::group),
+            required ("name",    &ConfigSelectGroup::name),
+            required ("options", &ConfigSelectGroup::options),
+            meta("_meta",   &ConfigSelectGroup::meta));
+    }
+};
+
+struct CSO_Ungrouped { List<ConfigSelectOption> items; };
+struct CSO_Grouped   { List<ConfigSelectGroup>  items; };
+using ConfigSelectOptions = Sum<CSO_Ungrouped, CSO_Grouped>;
+
+template <> struct CodecOf<ConfigSelectOptions> {
+    static Codec<ConfigSelectOptions> get() {
+        return {
+            [](const ConfigSelectOptions& v) -> Json {
+                return match(v,
+                    [](const CSO_Ungrouped& x){ return to_json(x.items); },
+                    [](const CSO_Grouped&   x){ return to_json(x.items); });
+            },
+            [](const Json& j) -> ConfigSelectOptions {
+                if (!j.is_array()) throw CodecError("ConfigSelectOptions: expected array");
+                // Grouped iff first element has "group" key.
+                if (!j.empty() && j.front().is_object() && j.front().contains("group")) {
+                    return ConfigSelectOptions{CSO_Grouped{from_json<List<ConfigSelectGroup>>(j)}};
+                }
+                return ConfigSelectOptions{CSO_Ungrouped{from_json<List<ConfigSelectOption>>(j)}};
+            }};
     }
 };
 
 struct ConfigOption {
-    std::string id;
+    std::string id;                       // SessionConfigId
     std::string name;
     Maybe<std::string> description;
-    Maybe<std::string> category;    // "mode" | "model" | "thought_level" | _custom
-    std::string type = "select";    // only "select" today
-    std::string currentValue;
-    List<ConfigOptionValue> options;
+    Maybe<std::string> category;          // "mode" | "model" | "thought_level" | _custom
+    std::string type = "select";          // only "select" today
+    std::string currentValue;             // SessionConfigValueId
+    ConfigSelectOptions options;
+    Json meta = Json::object();
 };
 template <> struct CodecOf<ConfigOption> {
     static Codec<ConfigOption> get() {
@@ -181,18 +231,50 @@ template <> struct CodecOf<ConfigOption> {
             optional ("category",     &ConfigOption::category),
             defaulted("type",         &ConfigOption::type, std::string{"select"}),
             required ("currentValue", &ConfigOption::currentValue),
-            required ("options",      &ConfigOption::options));
+            required ("options",      &ConfigOption::options),
+            meta("_meta",        &ConfigOption::meta));
     }
 };
 
+// Legacy alias retained for source compatibility — prefer ConfigSelectOption.
+using ConfigOptionValue = ConfigSelectOption;
+
 //==============================================================================
 //  Slash commands.
+//
+//  AvailableCommandInput is a tagged sum (forward-compat). Today the only arm
+//  is `UnstructuredCommandInput`. Discriminator key: "type". Default arm when
+//  "type" is absent: unstructured.
 //==============================================================================
-struct AvailableCommandInput { std::string hint; };
+struct UnstructuredCommandInput {
+    std::string hint;
+    Json meta = Json::object();
+};
+template <> struct CodecOf<UnstructuredCommandInput> {
+    static Codec<UnstructuredCommandInput> get() {
+        return record<UnstructuredCommandInput>(
+            required("hint",  &UnstructuredCommandInput::hint),
+            meta("_meta", &UnstructuredCommandInput::meta));
+    }
+};
+
+using AvailableCommandInput = Sum<UnstructuredCommandInput>;
 template <> struct CodecOf<AvailableCommandInput> {
     static Codec<AvailableCommandInput> get() {
-        return record<AvailableCommandInput>(
-            required("hint", &AvailableCommandInput::hint));
+        // Single arm today; encode without explicit "type" tag (it's the default).
+        // Decode: accept either tagged or untagged.
+        return {
+            [](const AvailableCommandInput& v) -> Json {
+                return match(v,
+                    [](const UnstructuredCommandInput& x){ return to_json(x); });
+            },
+            [](const Json& j) -> AvailableCommandInput {
+                if (!j.is_object()) throw CodecError("AvailableCommandInput: expected object");
+                const std::string type = j.value("type", "unstructured");
+                if (type == "unstructured")
+                    return AvailableCommandInput{from_json<UnstructuredCommandInput>(j)};
+                throw CodecError("AvailableCommandInput: unknown type \"" + type + "\"");
+            }};
     }
 };
 

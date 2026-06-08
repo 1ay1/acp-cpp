@@ -20,9 +20,36 @@
 
 namespace acp {
 
-// `annotations` is treated as an opaque JSON pass-through. The MCP spec defines
-// the inner shape; we do not parse it here so the protocol stays decoupled.
-using Annotations = Json;
+//==============================================================================
+//  Role — the sender/recipient indicator on annotations.
+//==============================================================================
+enum class Role { Assistant, User };
+template <> struct CodecOf<Role> {
+    static Codec<Role> get() {
+        return enum_codec<Role>(
+            EnumMapping<Role>{Role::Assistant, "assistant"},
+            EnumMapping<Role>{Role::User,      "user"});
+    }
+};
+
+//==============================================================================
+//  Annotations — hints for clients about how to display content.
+//==============================================================================
+struct Annotations {
+    Maybe<List<Role>>   audience;
+    Maybe<std::string>  lastModified;     // ISO 8601
+    Maybe<double>       priority;
+    Json meta = Json::object();
+};
+template <> struct CodecOf<Annotations> {
+    static Codec<Annotations> get() {
+        return record<Annotations>(
+            optional("audience",     &Annotations::audience),
+            optional("lastModified", &Annotations::lastModified),
+            optional("priority",     &Annotations::priority),
+            meta("_meta",       &Annotations::meta));
+    }
+};
 
 //==============================================================================
 //  Embedded resource — text | blob

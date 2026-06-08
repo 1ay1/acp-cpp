@@ -104,6 +104,14 @@ public:
         return engine_.request<Unit>(method::TerminalRelease, p);
     }
 
+    // ----------------------------------------------------------- ext methods
+    std::future<Json> ext_request(std::string_view m, const Json& p = Json::object()) {
+        return engine_.ext_request(m, p);
+    }
+    void ext_notify(std::string_view m, const Json& p = Json::object()) {
+        engine_.ext_notify(m, p);
+    }
+
     // Cached negotiated capabilities (set after on_initialize fires, or any
     // time the agent wants to remember them).
     void remember_negotiated(const InitializeParams& p) noexcept { negotiated_ = p; }

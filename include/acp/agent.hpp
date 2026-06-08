@@ -114,6 +114,14 @@ public:
         return engine_.request<SetConfigOptionResult>(method::SessionSetConfig, p);
     }
 
+    // ----------------------------------------------------------- ext methods
+    std::future<Json> ext_request(std::string_view m, const Json& p = Json::object()) {
+        return engine_.ext_request(m, p);
+    }
+    void ext_notify(std::string_view m, const Json& p = Json::object()) {
+        engine_.ext_notify(m, p);
+    }
+
     // Capability negotiation result — cached after initialize() resolves so we
     // can refuse to send capability-gated calls. Users can also poll directly.
     void remember_negotiated(const InitializeResult& r) noexcept {
