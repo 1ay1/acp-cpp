@@ -71,19 +71,22 @@ template <> struct CodecOf<ToolCallStatus> {
 //==============================================================================
 //  ToolCallContent  ≅ Content + Diff + Terminal  (tag = "type")
 //==============================================================================
-struct TCC_Content   { ContentBlock content; };
+struct TCC_Content   { ContentBlock content; Json meta = Json::object(); };
 struct TCC_Diff      {
     std::string path;
     Maybe<std::string> oldText;   // Nothing ⇒ new file
     std::string newText;
+    Json meta = Json::object();
 };
-struct TCC_Terminal  { std::string terminalId; };
+struct TCC_Terminal  { std::string terminalId; Json meta = Json::object(); };
 
 using ToolCallContent = Sum<TCC_Content, TCC_Diff, TCC_Terminal>;
 
 template <> struct CodecOf<TCC_Content> {
     static Codec<TCC_Content> get() {
-        return record<TCC_Content>(required("content", &TCC_Content::content));
+        return record<TCC_Content>(
+            required("content", &TCC_Content::content),
+            meta("_meta",  &TCC_Content::meta));
     }
 };
 template <> struct CodecOf<TCC_Diff> {
@@ -91,12 +94,15 @@ template <> struct CodecOf<TCC_Diff> {
         return record<TCC_Diff>(
             required ("path",    &TCC_Diff::path),
             optional ("oldText", &TCC_Diff::oldText),
-            required ("newText", &TCC_Diff::newText));
+            required ("newText", &TCC_Diff::newText),
+            meta("_meta",   &TCC_Diff::meta));
     }
 };
 template <> struct CodecOf<TCC_Terminal> {
     static Codec<TCC_Terminal> get() {
-        return record<TCC_Terminal>(required("terminalId", &TCC_Terminal::terminalId));
+        return record<TCC_Terminal>(
+            required("terminalId", &TCC_Terminal::terminalId),
+            meta("_meta",     &TCC_Terminal::meta));
     }
 };
 template <> struct CodecOf<ToolCallContent> {
@@ -114,12 +120,14 @@ template <> struct CodecOf<ToolCallContent> {
 struct ToolCallLocation {
     std::string path;
     Maybe<std::int64_t> line;
+    Json meta = Json::object();
 };
 template <> struct CodecOf<ToolCallLocation> {
     static Codec<ToolCallLocation> get() {
         return record<ToolCallLocation>(
             required ("path", &ToolCallLocation::path),
-            optional ("line", &ToolCallLocation::line));
+            optional ("line", &ToolCallLocation::line),
+            meta("_meta", &ToolCallLocation::meta));
     }
 };
 
@@ -209,13 +217,15 @@ struct PlanEntry {
     std::string content;
     PlanEntryPriority priority = PlanEntryPriority::Medium;
     PlanEntryStatus   status   = PlanEntryStatus::Pending;
+    Json meta = Json::object();
 };
 template <> struct CodecOf<PlanEntry> {
     static Codec<PlanEntry> get() {
         return record<PlanEntry>(
             required ("content",  &PlanEntry::content),
             defaulted("priority", &PlanEntry::priority, PlanEntryPriority::Medium),
-            defaulted("status",   &PlanEntry::status,   PlanEntryStatus::Pending));
+            defaulted("status",   &PlanEntry::status,   PlanEntryStatus::Pending),
+            meta("_meta",    &PlanEntry::meta));
     }
 };
 
@@ -237,13 +247,15 @@ struct PermissionOption {
     std::string optionId;
     std::string name;
     PermissionOptionKind kind = PermissionOptionKind::AllowOnce;
+    Json meta = Json::object();
 };
 template <> struct CodecOf<PermissionOption> {
     static Codec<PermissionOption> get() {
         return record<PermissionOption>(
             required ("optionId", &PermissionOption::optionId),
             required ("name",     &PermissionOption::name),
-            defaulted("kind",     &PermissionOption::kind, PermissionOptionKind::AllowOnce));
+            defaulted("kind",     &PermissionOption::kind, PermissionOptionKind::AllowOnce),
+            meta("_meta",    &PermissionOption::meta));
     }
 };
 
@@ -253,7 +265,7 @@ template <> struct CodecOf<PermissionOption> {
 //     { "outcome": "selected", "optionId": "..." }
 //
 struct PO_Cancelled {};
-struct PO_Selected  { std::string optionId; };
+struct PO_Selected  { std::string optionId; Json meta = Json::object(); };
 using RequestPermissionOutcome = Sum<PO_Cancelled, PO_Selected>;
 
 template <> struct CodecOf<PO_Cancelled> {
@@ -264,7 +276,9 @@ template <> struct CodecOf<PO_Cancelled> {
 };
 template <> struct CodecOf<PO_Selected> {
     static Codec<PO_Selected> get() {
-        return record<PO_Selected>(required("optionId", &PO_Selected::optionId));
+        return record<PO_Selected>(
+            required("optionId", &PO_Selected::optionId),
+            meta("_meta",   &PO_Selected::meta));
     }
 };
 template <> struct CodecOf<RequestPermissionOutcome> {

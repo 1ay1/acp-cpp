@@ -234,6 +234,14 @@ The library is **header-only**; no source files to compile separately.
 | Usage         | `Cost`, `usage_update` token counts | ✅ |
 | Extensibility | `_meta` on every type, `_`-prefixed custom methods (via raw `notify_raw`/`request_raw`) | ✅ |
 
+This library targets **ACP protocol version 1** (`kProtocolVersion == 1`),
+verified field-by-field against `schema/v1/schema.json`. Every data field of
+all 135 schema definitions is present and correctly named, every enum carries
+the exact wire spellings, and the spec's `_meta` extension object round-trips
+on each type that defines it. Empty `_meta` is omitted from the wire per spec;
+the terminal `Unit` responses (logout/authenticate/write/kill/release, etc.)
+tolerate and ignore any `_meta` a peer attaches.
+
 Optional capabilities are gated at runtime by inspecting
 `AgentConnection::negotiated()` / `ClientConnection::negotiated()` after
 `initialize`. Sending a method whose capability wasn't negotiated returns

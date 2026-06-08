@@ -35,14 +35,14 @@ struct SU_UserMessageChunk   { ContentBlock content; Maybe<MessageId> messageId;
 struct SU_AgentMessageChunk  { ContentBlock content; Maybe<MessageId> messageId; };
 struct SU_AgentThoughtChunk  { ContentBlock content; Maybe<MessageId> messageId; };
 
-struct SU_Plan               { List<PlanEntry> entries; };
+struct SU_Plan               { List<PlanEntry> entries; Json meta = Json::object(); };
 
 struct SU_ToolCall           { ToolCall       toolCall; };
 struct SU_ToolCallUpdate     { ToolCallUpdate update;   };
 
-struct SU_AvailableCommands  { List<AvailableCommand> availableCommands; };
-struct SU_CurrentMode        { SessionModeId currentModeId; };
-struct SU_ConfigOptions      { List<ConfigOption> configOptions; };
+struct SU_AvailableCommands  { List<AvailableCommand> availableCommands; Json meta = Json::object(); };
+struct SU_CurrentMode        { SessionModeId currentModeId; Json meta = Json::object(); };
+struct SU_ConfigOptions      { List<ConfigOption> configOptions; Json meta = Json::object(); };
 
 struct SU_SessionInfo {
     Maybe<std::string> title;
@@ -95,7 +95,9 @@ template <> struct CodecOf<SU_AgentThoughtChunk> {
 };
 template <> struct CodecOf<SU_Plan> {
     static Codec<SU_Plan> get() {
-        return record<SU_Plan>(required("entries", &SU_Plan::entries));
+        return record<SU_Plan>(
+            required("entries", &SU_Plan::entries),
+            meta("_meta",  &SU_Plan::meta));
     }
 };
 
@@ -118,18 +120,22 @@ template <> struct CodecOf<SU_ToolCallUpdate> {
 template <> struct CodecOf<SU_AvailableCommands> {
     static Codec<SU_AvailableCommands> get() {
         return record<SU_AvailableCommands>(
-            required("availableCommands", &SU_AvailableCommands::availableCommands));
+            required("availableCommands", &SU_AvailableCommands::availableCommands),
+            meta("_meta",            &SU_AvailableCommands::meta));
     }
 };
 template <> struct CodecOf<SU_CurrentMode> {
     static Codec<SU_CurrentMode> get() {
-        return record<SU_CurrentMode>(required("currentModeId", &SU_CurrentMode::currentModeId));
+        return record<SU_CurrentMode>(
+            required("currentModeId", &SU_CurrentMode::currentModeId),
+            meta("_meta",        &SU_CurrentMode::meta));
     }
 };
 template <> struct CodecOf<SU_ConfigOptions> {
     static Codec<SU_ConfigOptions> get() {
         return record<SU_ConfigOptions>(
-            required("configOptions", &SU_ConfigOptions::configOptions));
+            required("configOptions", &SU_ConfigOptions::configOptions),
+            meta("_meta",        &SU_ConfigOptions::meta));
     }
 };
 template <> struct CodecOf<SU_SessionInfo> {

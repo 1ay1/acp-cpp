@@ -58,11 +58,13 @@ struct TextResource {
     std::string uri;
     std::string text;
     Maybe<std::string> mimeType;
+    Json meta = Json::object();
 };
 struct BlobResource {
     std::string uri;
     std::string blob;        // base64
     Maybe<std::string> mimeType;
+    Json meta = Json::object();
 };
 using EmbeddedResource = Sum<TextResource, BlobResource>;
 
@@ -118,7 +120,8 @@ template <> struct CodecOf<TextResource> {
         return record<TextResource>(
             required ("uri",      &TextResource::uri),
             required ("text",     &TextResource::text),
-            optional ("mimeType", &TextResource::mimeType));
+            optional ("mimeType", &TextResource::mimeType),
+            meta("_meta",    &TextResource::meta));
     }
 };
 template <> struct CodecOf<BlobResource> {
@@ -126,7 +129,8 @@ template <> struct CodecOf<BlobResource> {
         return record<BlobResource>(
             required ("uri",      &BlobResource::uri),
             required ("blob",     &BlobResource::blob),
-            optional ("mimeType", &BlobResource::mimeType));
+            optional ("mimeType", &BlobResource::mimeType),
+            meta("_meta",    &BlobResource::meta));
     }
 };
 template <> struct CodecOf<EmbeddedResource> {

@@ -109,11 +109,12 @@ template <> struct CodecOf<InitializeResult> {
 //==============================================================================
 //  authenticate / logout
 //==============================================================================
-struct AuthenticateParams { std::string methodId; };
+struct AuthenticateParams { std::string methodId; Json meta = Json::object(); };
 template <> struct CodecOf<AuthenticateParams> {
     static Codec<AuthenticateParams> get() {
         return record<AuthenticateParams>(
-            required("methodId", &AuthenticateParams::methodId));
+            required("methodId", &AuthenticateParams::methodId),
+            meta("_meta",   &AuthenticateParams::meta));
     }
 };
 
@@ -124,13 +125,15 @@ struct NewSessionParams {
     std::string cwd;
     List<McpServer> mcpServers;
     Maybe<List<std::string>> additionalDirectories;
+    Json meta = Json::object();
 };
 template <> struct CodecOf<NewSessionParams> {
     static Codec<NewSessionParams> get() {
         return record<NewSessionParams>(
             required ("cwd",                   &NewSessionParams::cwd),
             defaulted("mcpServers",            &NewSessionParams::mcpServers, List<McpServer>{}),
-            optional ("additionalDirectories", &NewSessionParams::additionalDirectories));
+            optional ("additionalDirectories", &NewSessionParams::additionalDirectories),
+            meta("_meta",                 &NewSessionParams::meta));
     }
 };
 
@@ -155,6 +158,7 @@ struct LoadSessionParams {
     std::string cwd;
     List<McpServer> mcpServers;
     Maybe<List<std::string>> additionalDirectories;
+    Json meta = Json::object();
 };
 template <> struct CodecOf<LoadSessionParams> {
     static Codec<LoadSessionParams> get() {
@@ -162,7 +166,8 @@ template <> struct CodecOf<LoadSessionParams> {
             required ("sessionId",             &LoadSessionParams::sessionId),
             required ("cwd",                   &LoadSessionParams::cwd),
             defaulted("mcpServers",            &LoadSessionParams::mcpServers, List<McpServer>{}),
-            optional ("additionalDirectories", &LoadSessionParams::additionalDirectories));
+            optional ("additionalDirectories", &LoadSessionParams::additionalDirectories),
+            meta("_meta",                 &LoadSessionParams::meta));
     }
 };
 
@@ -182,16 +187,20 @@ template <> struct CodecOf<ResumeSessionResult> {
     }
 };
 
-struct CloseSessionParams  { SessionId sessionId; };
-struct DeleteSessionParams { SessionId sessionId; };
+struct CloseSessionParams  { SessionId sessionId; Json meta = Json::object(); };
+struct DeleteSessionParams { SessionId sessionId; Json meta = Json::object(); };
 template <> struct CodecOf<CloseSessionParams> {
     static Codec<CloseSessionParams> get() {
-        return record<CloseSessionParams>(required("sessionId", &CloseSessionParams::sessionId));
+        return record<CloseSessionParams>(
+            required("sessionId", &CloseSessionParams::sessionId),
+            meta("_meta",    &CloseSessionParams::meta));
     }
 };
 template <> struct CodecOf<DeleteSessionParams> {
     static Codec<DeleteSessionParams> get() {
-        return record<DeleteSessionParams>(required("sessionId", &DeleteSessionParams::sessionId));
+        return record<DeleteSessionParams>(
+            required("sessionId", &DeleteSessionParams::sessionId),
+            meta("_meta",    &DeleteSessionParams::meta));
     }
 };
 
@@ -201,24 +210,28 @@ template <> struct CodecOf<DeleteSessionParams> {
 struct ListSessionsParams {
     Maybe<std::string> cwd;
     Maybe<std::string> cursor;
+    Json meta = Json::object();
 };
 template <> struct CodecOf<ListSessionsParams> {
     static Codec<ListSessionsParams> get() {
         return record<ListSessionsParams>(
             optional("cwd",    &ListSessionsParams::cwd),
-            optional("cursor", &ListSessionsParams::cursor));
+            optional("cursor", &ListSessionsParams::cursor),
+            meta("_meta", &ListSessionsParams::meta));
     }
 };
 
 struct ListSessionsResult {
     List<SessionInfo> sessions;
     Maybe<std::string> nextCursor;
+    Json meta = Json::object();
 };
 template <> struct CodecOf<ListSessionsResult> {
     static Codec<ListSessionsResult> get() {
         return record<ListSessionsResult>(
             defaulted("sessions",   &ListSessionsResult::sessions, List<SessionInfo>{}),
-            optional ("nextCursor", &ListSessionsResult::nextCursor));
+            optional ("nextCursor", &ListSessionsResult::nextCursor),
+            meta("_meta",      &ListSessionsResult::meta));
     }
 };
 
@@ -251,20 +264,24 @@ template <> struct CodecOf<PromptParams> {
     }
 };
 
-struct PromptResult { StopReason stopReason = StopReason::EndTurn; };
+struct PromptResult { StopReason stopReason = StopReason::EndTurn; Json meta = Json::object(); };
 template <> struct CodecOf<PromptResult> {
     static Codec<PromptResult> get() {
-        return record<PromptResult>(required("stopReason", &PromptResult::stopReason));
+        return record<PromptResult>(
+            required("stopReason", &PromptResult::stopReason),
+            meta("_meta",     &PromptResult::meta));
     }
 };
 
 //==============================================================================
 //  session/cancel (notification)
 //==============================================================================
-struct CancelParams { SessionId sessionId; };
+struct CancelParams { SessionId sessionId; Json meta = Json::object(); };
 template <> struct CodecOf<CancelParams> {
     static Codec<CancelParams> get() {
-        return record<CancelParams>(required("sessionId", &CancelParams::sessionId));
+        return record<CancelParams>(
+            required("sessionId", &CancelParams::sessionId),
+            meta("_meta",    &CancelParams::meta));
     }
 };
 
@@ -274,12 +291,14 @@ template <> struct CodecOf<CancelParams> {
 struct SetModeParams {
     SessionId sessionId;
     SessionModeId modeId;
+    Json meta = Json::object();
 };
 template <> struct CodecOf<SetModeParams> {
     static Codec<SetModeParams> get() {
         return record<SetModeParams>(
             required("sessionId", &SetModeParams::sessionId),
-            required("modeId",    &SetModeParams::modeId));
+            required("modeId",    &SetModeParams::modeId),
+            meta("_meta",    &SetModeParams::meta));
     }
 };
 
@@ -287,21 +306,24 @@ struct SetConfigOptionParams {
     SessionId sessionId;
     std::string configId;
     std::string value;
+    Json meta = Json::object();
 };
 template <> struct CodecOf<SetConfigOptionParams> {
     static Codec<SetConfigOptionParams> get() {
         return record<SetConfigOptionParams>(
             required("sessionId", &SetConfigOptionParams::sessionId),
             required("configId",  &SetConfigOptionParams::configId),
-            required("value",     &SetConfigOptionParams::value));
+            required("value",     &SetConfigOptionParams::value),
+            meta("_meta",    &SetConfigOptionParams::meta));
     }
 };
 
-struct SetConfigOptionResult { List<ConfigOption> configOptions; };
+struct SetConfigOptionResult { List<ConfigOption> configOptions; Json meta = Json::object(); };
 template <> struct CodecOf<SetConfigOptionResult> {
     static Codec<SetConfigOptionResult> get() {
         return record<SetConfigOptionResult>(
-            required("configOptions", &SetConfigOptionResult::configOptions));
+            required("configOptions", &SetConfigOptionResult::configOptions),
+            meta("_meta",        &SetConfigOptionResult::meta));
     }
 };
 
@@ -329,21 +351,24 @@ struct RequestPermissionParams {
     SessionId sessionId;
     ToolCallUpdate toolCall;
     List<PermissionOption> options;
+    Json meta = Json::object();
 };
 template <> struct CodecOf<RequestPermissionParams> {
     static Codec<RequestPermissionParams> get() {
         return record<RequestPermissionParams>(
             required("sessionId", &RequestPermissionParams::sessionId),
             required("toolCall",  &RequestPermissionParams::toolCall),
-            required("options",   &RequestPermissionParams::options));
+            required("options",   &RequestPermissionParams::options),
+            meta("_meta",    &RequestPermissionParams::meta));
     }
 };
 
-struct RequestPermissionResult { RequestPermissionOutcome outcome; };
+struct RequestPermissionResult { RequestPermissionOutcome outcome; Json meta = Json::object(); };
 template <> struct CodecOf<RequestPermissionResult> {
     static Codec<RequestPermissionResult> get() {
         return record<RequestPermissionResult>(
-            required("outcome", &RequestPermissionResult::outcome));
+            required("outcome", &RequestPermissionResult::outcome),
+            meta("_meta",  &RequestPermissionResult::meta));
     }
 };
 
@@ -355,6 +380,7 @@ struct ReadTextFileParams {
     std::string path;
     Maybe<std::int64_t> line;
     Maybe<std::int64_t> limit;
+    Json meta = Json::object();
 };
 template <> struct CodecOf<ReadTextFileParams> {
     static Codec<ReadTextFileParams> get() {
@@ -362,14 +388,17 @@ template <> struct CodecOf<ReadTextFileParams> {
             required("sessionId", &ReadTextFileParams::sessionId),
             required("path",      &ReadTextFileParams::path),
             optional("line",      &ReadTextFileParams::line),
-            optional("limit",     &ReadTextFileParams::limit));
+            optional("limit",     &ReadTextFileParams::limit),
+            meta("_meta",    &ReadTextFileParams::meta));
     }
 };
 
-struct ReadTextFileResult { std::string content; };
+struct ReadTextFileResult { std::string content; Json meta = Json::object(); };
 template <> struct CodecOf<ReadTextFileResult> {
     static Codec<ReadTextFileResult> get() {
-        return record<ReadTextFileResult>(required("content", &ReadTextFileResult::content));
+        return record<ReadTextFileResult>(
+            required("content", &ReadTextFileResult::content),
+            meta("_meta",  &ReadTextFileResult::meta));
     }
 };
 
@@ -377,13 +406,15 @@ struct WriteTextFileParams {
     SessionId sessionId;
     std::string path;
     std::string content;
+    Json meta = Json::object();
 };
 template <> struct CodecOf<WriteTextFileParams> {
     static Codec<WriteTextFileParams> get() {
         return record<WriteTextFileParams>(
             required("sessionId", &WriteTextFileParams::sessionId),
             required("path",      &WriteTextFileParams::path),
-            required("content",   &WriteTextFileParams::content));
+            required("content",   &WriteTextFileParams::content),
+            meta("_meta",    &WriteTextFileParams::meta));
     }
 };
 
@@ -397,6 +428,7 @@ struct CreateTerminalParams {
     List<KeyValue> env;
     Maybe<std::string> cwd;
     Maybe<std::int64_t> outputByteLimit;
+    Json meta = Json::object();
 };
 template <> struct CodecOf<CreateTerminalParams> {
     static Codec<CreateTerminalParams> get() {
@@ -406,14 +438,17 @@ template <> struct CodecOf<CreateTerminalParams> {
             defaulted("args",            &CreateTerminalParams::args, List<std::string>{}),
             defaulted("env",             &CreateTerminalParams::env,  List<KeyValue>{}),
             optional ("cwd",             &CreateTerminalParams::cwd),
-            optional ("outputByteLimit", &CreateTerminalParams::outputByteLimit));
+            optional ("outputByteLimit", &CreateTerminalParams::outputByteLimit),
+            meta("_meta",           &CreateTerminalParams::meta));
     }
 };
 
-struct CreateTerminalResult { std::string terminalId; };
+struct CreateTerminalResult { std::string terminalId; Json meta = Json::object(); };
 template <> struct CodecOf<CreateTerminalResult> {
     static Codec<CreateTerminalResult> get() {
-        return record<CreateTerminalResult>(required("terminalId", &CreateTerminalResult::terminalId));
+        return record<CreateTerminalResult>(
+            required("terminalId", &CreateTerminalResult::terminalId),
+            meta("_meta",     &CreateTerminalResult::meta));
     }
 };
 
@@ -421,12 +456,14 @@ template <> struct CodecOf<CreateTerminalResult> {
 struct TerminalRef {
     SessionId sessionId;
     std::string terminalId;
+    Json meta = Json::object();
 };
 template <> struct CodecOf<TerminalRef> {
     static Codec<TerminalRef> get() {
         return record<TerminalRef>(
             required("sessionId",  &TerminalRef::sessionId),
-            required("terminalId", &TerminalRef::terminalId));
+            required("terminalId", &TerminalRef::terminalId),
+            meta("_meta",     &TerminalRef::meta));
     }
 };
 using TerminalOutputParams      = TerminalRef;
@@ -437,12 +474,14 @@ using TerminalReleaseParams     = TerminalRef;
 struct TerminalExitStatus {
     Maybe<std::int64_t> exitCode;
     Maybe<std::string>  signal;
+    Json meta = Json::object();
 };
 template <> struct CodecOf<TerminalExitStatus> {
     static Codec<TerminalExitStatus> get() {
         return record<TerminalExitStatus>(
             optional("exitCode", &TerminalExitStatus::exitCode),
-            optional("signal",   &TerminalExitStatus::signal));
+            optional("signal",   &TerminalExitStatus::signal),
+            meta("_meta",   &TerminalExitStatus::meta));
     }
 };
 
@@ -450,13 +489,15 @@ struct TerminalOutputResult {
     std::string output;
     bool truncated = false;
     Maybe<TerminalExitStatus> exitStatus;
+    Json meta = Json::object();
 };
 template <> struct CodecOf<TerminalOutputResult> {
     static Codec<TerminalOutputResult> get() {
         return record<TerminalOutputResult>(
             required ("output",     &TerminalOutputResult::output),
             defaulted("truncated",  &TerminalOutputResult::truncated, false),
-            optional ("exitStatus", &TerminalOutputResult::exitStatus));
+            optional ("exitStatus", &TerminalOutputResult::exitStatus),
+            meta("_meta",      &TerminalOutputResult::meta));
     }
 };
 
