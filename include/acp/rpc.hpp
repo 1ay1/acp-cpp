@@ -145,8 +145,8 @@ public:
     // ---------------------------------------------------------- observability
     // Install a wire tracer (every inbound/outbound frame) and/or an error
     // callback (transport faults not tied to one request). Both are optional.
-    void set_wire_trace(WireTrace t)    { std::lock_guard lk(mu_); trace_ = std::move(t); }
-    void set_error_callback(ErrorCallback e) { std::lock_guard lk(mu_); on_error_ = std::move(e); }
+    void set_wire_trace(WireTrace t)    { std::lock_guard lk(mu_); trace_ = std::move(t); has_trace_.store(static_cast<bool>(trace_), std::memory_order_release); }
+    void set_error_callback(ErrorCallback e) { std::lock_guard lk(mu_); on_error_ = std::move(e); has_error_cb_.store(static_cast<bool>(on_error_), std::memory_order_release); }
 
     // Default deadline applied to every typed/raw request that doesn't pass an
     // explicit timeout. Zero (the default) means "wait forever".
@@ -292,8 +292,7 @@ public:
     // Send a late reply to a previously-deferred request. Thread-safe; the
     // write is serialised through the transport's sink.
     void respond_raw(const RpcId& id, const Json& result) {
-        Json env = {{"jsonrpc", "2.0"}, {"id", id}, {"result", result}};
-        write_line(env.dump());
+        write_line(build_response(id, result));
     }
     void respond_error_raw(const RpcId& id, int code, std::string message,
                            Json data = Json()) {
@@ -302,17 +301,21 @@ public:
 
     // ---------------------------------------------------------------- outbound
     // Raw (Json) notification — for custom/extension methods.
+    //
+    //   HOT PATH. session/update fires this once per streamed text delta and
+    //   once per tool-call transition — hundreds of times per turn. We do NOT
+    //   build an intermediate `{jsonrpc,method,params}` Json object and then
+    //   dump() it: that allocates a second object node + three map entries and
+    //   re-walks the params tree. Instead we serialize the fixed envelope
+    //   prefix as raw bytes and let params.dump() write straight into the same
+    //   reused string via nlohmann's SAX-free dump-into-buffer.
     void notify_raw(std::string_view method, const Json& params) {
-        Json env = {{"jsonrpc", "2.0"}, {"method", std::string(method)}};
-        if (!params.is_null()) env["params"] = params;
-        write_line(env.dump());
+        write_line(build_notification(method, params));
     }
-    // Move overload — avoids a deep copy of the params tree on the hot
-    // notification path (session/update fires this many times per turn).
+    // Move overload — params is consumed; identical wire output. Kept distinct
+    // so callers that own an rvalue Json (typed notify) don't force a copy.
     void notify_raw(std::string_view method, Json&& params) {
-        Json env = {{"jsonrpc", "2.0"}, {"method", std::string(method)}};
-        if (!params.is_null()) env["params"] = std::move(params);
-        write_line(env.dump());
+        write_line(build_notification(method, params));
     }
     // Typed notification.
     template <class Params>
@@ -460,6 +463,65 @@ public:
 
 private:
     // ----------------------------------------------------------- bookkeeping
+
+    // Append `s` as a JSON string literal (with surrounding quotes) to `out`.
+    // Method names are ASCII spec constants, but we escape defensively so a
+    // caller-supplied ext method can never corrupt the frame.
+    static void append_json_string(std::string& out, std::string_view s) {
+        out.push_back('"');
+        for (char c : s) {
+            switch (c) {
+                case '"':  out += "\\\""; break;
+                case '\\': out += "\\\\"; break;
+                case '\n': out += "\\n";  break;
+                case '\r': out += "\\r";  break;
+                case '\t': out += "\\t";  break;
+                default:
+                    if (static_cast<unsigned char>(c) < 0x20) {
+                        static const char* hex = "0123456789abcdef";
+                        out += "\\u00";
+                        out.push_back(hex[(c >> 4) & 0xF]);
+                        out.push_back(hex[c & 0xF]);
+                    } else {
+                        out.push_back(c);
+                    }
+            }
+        }
+        out.push_back('"');
+    }
+
+    // Serialize a JSON-RPC notification envelope directly into a string,
+    // dumping `params` inline instead of building an intermediate Json object.
+    // Equivalent wire bytes to `{{"jsonrpc","2.0"},{"method",m},{"params",p}}`
+    // .dump() but with one fewer object allocation and no map inserts.
+    static std::string build_notification(std::string_view method, const Json& params) {
+        std::string out;
+        out.reserve(48);
+        out += "{\"jsonrpc\":\"2.0\",\"method\":";
+        append_json_string(out, method);
+        if (!params.is_null()) {
+            out += ",\"params\":";
+            out += params.dump(-1, ' ', false, Json::error_handler_t::replace);
+        }
+        out.push_back('}');
+        return out;
+    }
+
+    // Serialize a successful JSON-RPC response envelope directly. `id` is a
+    // small int or short string, `result` dumped inline. Same win as
+    // build_notification: no intermediate `{jsonrpc,id,result}` object.
+    static std::string build_response(const Json& id, const Json& result) {
+        std::string out;
+        out.reserve(48);
+        out += "{\"jsonrpc\":\"2.0\",\"id\":";
+        out += id.dump(-1, ' ', false, Json::error_handler_t::replace);
+        out += ",\"result\":";
+        out += (result.is_null() ? std::string("null")
+                                 : result.dump(-1, ' ', false, Json::error_handler_t::replace));
+        out.push_back('}');
+        return out;
+    }
+
     void write_line(std::string s) {
         // Spec: each frame is one JSON-RPC envelope with NO embedded newlines.
         // nlohmann::json::dump() never inserts literal '\n' (we don't pass
@@ -497,7 +559,13 @@ private:
     void handle_request(const Json& msg) {
         const auto& method = msg.at("method").get_ref<const std::string&>();
         const RpcId id     = msg.at("id");
-        const Json params  = msg.value("params", Json::object());
+        // Reference the existing params subtree instead of deep-copying it out
+        // of the parsed envelope — `msg` outlives this call and the handler only
+        // reads params. A prompt's params tree can be large; the copy was pure
+        // waste on every inbound request.
+        static const Json kEmptyObject = Json::object();
+        auto pit = msg.find("params");
+        const Json& params = (pit != msg.end()) ? *pit : kEmptyObject;
 
         RawRequest h;
         {
@@ -521,13 +589,14 @@ private:
         }
         // Nothing ⇒ the handler deferred; it will send the reply itself later.
         if (!result) return;
-        Json env = {{"jsonrpc", "2.0"}, {"id", id}, {"result", std::move(*result)}};
-        write_line(env.dump());
+        write_line(build_response(id, *result));
     }
 
     void handle_notification(const Json& msg) {
         const auto& method = msg.at("method").get_ref<const std::string&>();
-        const Json params  = msg.value("params", Json::object());
+        static const Json kEmptyObject = Json::object();
+        auto pit = msg.find("params");
+        const Json& params = (pit != msg.end()) ? *pit : kEmptyObject;
 
         RawNotification h;
         {
@@ -599,11 +668,15 @@ private:
 
     // ----------------------------------------------------------- hooks/timer
     void emit_trace(WireDir dir, std::string_view frame) {
+        // Fast path: no tracer installed (the production default) — skip the
+        // mutex entirely. This runs on every inbound AND outbound frame.
+        if (!has_trace_.load(std::memory_order_acquire)) return;
         WireTrace t;
         { std::lock_guard lk(mu_); t = trace_; }
         if (t) { try { t(dir, frame); } catch (...) {} }
     }
     void report_error(int code, std::string_view msg) {
+        if (!has_error_cb_.load(std::memory_order_acquire)) return;
         ErrorCallback e;
         { std::lock_guard lk(mu_); e = on_error_; }
         if (e) { try { e(code, msg); } catch (...) {} }
@@ -683,6 +756,8 @@ private:
 
     WireTrace     trace_;
     ErrorCallback on_error_;
+    std::atomic<bool> has_trace_{false};
+    std::atomic<bool> has_error_cb_{false};
     std::atomic<long long> default_timeout_{0};   // ms; 0 == no timeout
 
     // Deadline monitor — a lazily-started background thread that fails any
