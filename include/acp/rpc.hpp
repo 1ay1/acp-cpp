@@ -199,6 +199,44 @@ public:
             });
     }
 
+    // ---------------------------------------------- generic request cancel
+    //
+    //   $/cancel_request (stabilized 2026-06-29). Register a handler that is
+    //   invoked when the PEER asks to cancel an in-flight request by id. The
+    //   handler receives the raw JSON-RPC id (number or string). Typical use:
+    //   look the id up in an app-side table of running turns and signal that
+    //   turn to stop. Registering also arms the engine's own bookkeeping so a
+    //   cancel that targets an OUTBOUND request we are awaiting fails that
+    //   future with errc::Cancelled immediately.
+    //
+    //   Safe to call once at wiring time. The engine owns the wire method
+    //   registration; the app only supplies the semantic callback.
+    void on_cancel_request(std::function<void(const RpcId&)> handler) {
+        {
+            std::lock_guard lk(mu_);
+            cancel_handler_ = std::move(handler);
+        }
+        on_notification(std::string(method::CancelRequest),
+            [this](const Json& j) {
+                Json idj = j.is_object() ? j.value("id", Json()) : Json();
+                if (idj.is_null()) return;
+                // 1) If it targets an outbound request we're awaiting, fail it.
+                if (fail_waiter_if_cancelled(idj)) {
+                    // still fall through: the app may also track it
+                }
+                // 2) Hand the id to the app's cancel handler.
+                std::function<void(const RpcId&)> h;
+                { std::lock_guard lk(mu_); h = cancel_handler_; }
+                if (h) { try { h(idj); } catch (...) {} }
+            });
+    }
+
+    // Outbound: ask the peer to cancel the request with this id. `id` is the
+    // JSON-RPC id returned/observed for the request being cancelled.
+    void notify_cancel_request(const RpcId& id) {
+        notify_raw(method::CancelRequest, Json{{"id", id}});
+    }
+
     // -------------------------------------------------- deferred (async) replies
     //
     //   Responder<Result> — a one-shot handle to a pending inbound request. The
@@ -269,10 +307,17 @@ public:
         if (!params.is_null()) env["params"] = params;
         write_line(env.dump());
     }
+    // Move overload — avoids a deep copy of the params tree on the hot
+    // notification path (session/update fires this many times per turn).
+    void notify_raw(std::string_view method, Json&& params) {
+        Json env = {{"jsonrpc", "2.0"}, {"method", std::string(method)}};
+        if (!params.is_null()) env["params"] = std::move(params);
+        write_line(env.dump());
+    }
     // Typed notification.
     template <class Params>
     void notify(std::string_view method, const Params& params) {
-        notify_raw(method, to_json(params));
+        notify_raw(method, to_json(params));   // to_json returns an rvalue Json → move overload
     }
     // Notification with no params (e.g. `logout` is technically a request, but
     // many extension notifications carry no payload).
@@ -290,8 +335,6 @@ public:
     std::future<Json> request_raw(std::string_view method, const Json& params,
                                   std::chrono::milliseconds timeout = std::chrono::milliseconds::zero()) {
         std::int64_t id = next_id_.fetch_add(1, std::memory_order_relaxed);
-        Json id_json = id;
-        std::string key = id_json.dump();
 
         auto promise = std::make_shared<std::promise<Json>>();
         std::future<Json> fut = promise->get_future();
@@ -303,11 +346,14 @@ public:
                               std::chrono::milliseconds(ms);
         {
             std::lock_guard lk(mu_);
+            // Waiter keyed on the RAW integer id we just minted — no id.dump()
+            // string allocation per request. Every id we send is an integer,
+            // so the echoed response id parses back to the same key.
             Waiter w;
             w.promise      = std::move(promise);
             w.has_deadline = has_deadline;
             w.deadline     = deadline;
-            waiters_.emplace(std::move(key), std::move(w));
+            waiters_.emplace(id, std::move(w));
         }
         if (has_deadline) ensure_timer();
 
@@ -397,7 +443,7 @@ public:
     // Cancel every outstanding outbound request with an error. Idempotent.
     void shutdown(std::string reason = "engine shutdown",
                   int code = errc::InternalError) {
-        std::unordered_map<std::string, Waiter> taken;
+        std::unordered_map<std::int64_t, Waiter> taken;
         {
             std::lock_guard lk(mu_);
             taken.swap(waiters_);
@@ -492,11 +538,44 @@ private:
         try { h(params); } catch (...) { /* notifications never respond */ }
     }
 
+    // If `idj` names an OUTBOUND request we are currently awaiting, fail its
+    // future with errc::Cancelled and remove the waiter. Returns true if a
+    // waiter was found and cancelled. Used by the $/cancel_request handler so
+    // that a peer cancelling a request we sent unblocks the caller promptly
+    // instead of waiting for the deadline.
+    bool fail_waiter_if_cancelled(const Json& idj) {
+        std::int64_t key;
+        if (idj.is_number_integer())        key = idj.get<std::int64_t>();
+        else if (idj.is_number_unsigned())  key = static_cast<std::int64_t>(idj.get<std::uint64_t>());
+        else return false;   // not one of our integer ids
+
+        std::shared_ptr<std::promise<Json>> p;
+        {
+            std::lock_guard lk(mu_);
+            if (auto it = waiters_.find(key); it != waiters_.end()) {
+                p = std::move(it->second.promise);
+                waiters_.erase(it);
+            }
+        }
+        if (!p) return false;
+        try {
+            p->set_exception(std::make_exception_ptr(
+                RpcError(errc::Cancelled, "request cancelled by peer")));
+        } catch (...) {}
+        return true;
+    }
+
     void handle_response(const Json& msg) {
-        // Key on the canonical text form of the id (id.dump()). This matches
-        // exactly how request_raw stored the waiter, so number ids, string ids,
-        // and any other valid id resolve correctly — no coercion, no leak.
-        const std::string key = msg.at("id").dump();
+        // We only ever mint integer ids for our outbound requests, so a
+        // conforming peer echoes an integer id. Extract it directly — no
+        // id.dump() string allocation on the response hot path. A non-integer
+        // id here is a peer bug (or a response to an id we never sent); we drop
+        // it rather than allocate a coercion string.
+        const Json& idj = msg.at("id");
+        std::int64_t key;
+        if (idj.is_number_integer())        key = idj.get<std::int64_t>();
+        else if (idj.is_number_unsigned())  key = static_cast<std::int64_t>(idj.get<std::uint64_t>());
+        else return;   // string / null / float id: not one of ours
 
         std::shared_ptr<std::promise<Json>> p;
         {
@@ -588,16 +667,19 @@ private:
     std::unordered_map<std::string, RawNotification> notifications_;
 
     // A pending outbound request: its promise plus an optional deadline. Keyed
-    // by the CANONICAL string form of the JSON-RPC id (id.dump()), so string
-    // ids, integer ids, and any other valid id round-trip exactly and never
-    // leak a waiter on an unexpected echo.
+    // by the RAW integer JSON-RPC id we minted in request_raw — no per-request
+    // string allocation. Non-integer response ids (a peer bug) are dropped in
+    // handle_response rather than being looked up here.
     struct Waiter {
         std::shared_ptr<std::promise<Json>> promise;
         std::chrono::steady_clock::time_point deadline{};   // zero == none
         bool has_deadline = false;
         bool done = false;
     };
-    std::unordered_map<std::string, Waiter> waiters_;
+    std::unordered_map<std::int64_t, Waiter> waiters_;
+
+    // App callback for peer-initiated $/cancel_request (set via on_cancel_request).
+    std::function<void(const RpcId&)> cancel_handler_;
 
     WireTrace     trace_;
     ErrorCallback on_error_;

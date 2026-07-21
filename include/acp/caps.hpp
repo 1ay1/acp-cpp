@@ -34,7 +34,24 @@ struct CapabilityError : std::runtime_error {
 //  the two supported versions. `negotiate_version` returns the version both
 //  sides can speak, or throws if there is no overlap (theirs is older than the
 //  oldest we support, i.e. < 1).
+//
+//  Forward-compat / v2 seam: `kProtocolVersion` is the STABLE version we
+//  advertise by default (v1). ACP v2 is Draft (announced 2026-07-20) and the
+//  spec is explicit that implementers must gate it behind version negotiation
+//  AND a feature flag, and must NOT ship it by default. So the highest version
+//  we are willing to negotiate is `kMaxProtocolVersion`, which equals
+//  `kProtocolVersion` unless the build opts in via -DACP_ENABLE_V2_DRAFT=ON
+//  (which defines ACP_ENABLE_V2_DRAFT). Because negotiation is min(ours,
+//  theirs), advertising a higher ceiling is safe: a v1-only peer still lands on
+//  v1. Raising the ceiling does not by itself change any wire types — it only
+//  lets a v2-capable peer agree on v2 so v2 code paths can key off the result.
 //==============================================================================
+#if defined(ACP_ENABLE_V2_DRAFT)
+inline constexpr int kMaxProtocolVersion = 2;   // Draft v2 opted in at build time
+#else
+inline constexpr int kMaxProtocolVersion = kProtocolVersion;   // stable only (v1)
+#endif
+
 inline int negotiate_version(int ours, int theirs) {
     int agreed = ours < theirs ? ours : theirs;
     if (agreed < 1)

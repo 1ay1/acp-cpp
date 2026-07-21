@@ -3,6 +3,7 @@
 // Verifies acp/version.hpp constants are wired correctly from CMake.
 //
 #include <acp/version.hpp>
+#include <acp/caps.hpp>
 
 #include <cassert>
 #include <cstdio>
@@ -25,6 +26,25 @@ int main() {
     // protocol version must be a positive integer (the spec is integer-valued
     // and starts at 1)
     static_assert(kProtocolVersion >= 1, "protocol version starts at 1");
+
+    // The negotiation ceiling is never below the stable version, and equals it
+    // unless the Draft v2 opt-in was compiled in.
+    static_assert(kMaxProtocolVersion >= kProtocolVersion,
+                  "ceiling must be >= stable version");
+#if defined(ACP_ENABLE_V2_DRAFT)
+    static_assert(kMaxProtocolVersion == 2, "v2 opt-in should raise ceiling to 2");
+#else
+    static_assert(kMaxProtocolVersion == kProtocolVersion,
+                  "without opt-in the ceiling stays at the stable version");
+#endif
+
+    // Negotiation is min(ours, theirs), clamped to a floor of v1.
+    assert(negotiate_version(1, 2) == 1);   // v1 agent, v2 client -> v1
+    assert(negotiate_version(2, 1) == 1);   // v2 agent, v1 client -> v1
+    assert(negotiate_version(2, 2) == 2);   // both v2 -> v2
+    bool threw = false;
+    try { (void)negotiate_version(1, 0); } catch (const CapabilityError&) { threw = true; }
+    assert(threw && "a peer offering v0 has no compatible version");
 
     std::printf("acp-cpp %s, protocol v%d (major=%d minor=%d patch=%d)\n",
                 kLibraryVersion, kProtocolVersion,

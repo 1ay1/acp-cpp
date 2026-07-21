@@ -44,6 +44,14 @@ struct AgentHandlers {
     std::function<PromptResult     (const PromptParams&)>      on_session_prompt;
     std::function<void             (const CancelParams&)>      on_session_cancel;
 
+    // Generic JSON-RPC request cancellation ($/cancel_request, stabilized
+    // 2026-06-29). Invoked when the client asks to cancel an in-flight request
+    // by its JSON-RPC id. The handler receives the raw id (number or string);
+    // map it to your running-turn bookkeeping and signal that turn to stop.
+    // Distinct from on_session_cancel, which cancels a whole session turn by
+    // sessionId. If unset, $/cancel_request is silently ignored (spec-legal).
+    std::function<void             (const RpcId&)>            on_cancel_request;
+
     // Async variant of session/prompt. A prompt typically drives a whole
     // agent turn — it streams session/update notifications and may call BACK
     // to the client (session/request_permission, fs/*, terminal/*) before it
@@ -161,6 +169,9 @@ private:
         if (h.on_session_cancel) {
             engine_.on_note<CancelParams>(
                 std::string(method::SessionCancel), std::move(h.on_session_cancel));
+        }
+        if (h.on_cancel_request) {
+            engine_.on_cancel_request(std::move(h.on_cancel_request));
         }
 
         // Optional —

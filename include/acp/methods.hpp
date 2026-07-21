@@ -67,7 +67,32 @@ inline constexpr std::string_view TerminalOutput      = "terminal/output";
 inline constexpr std::string_view TerminalWaitForExit = "terminal/wait_for_exit";
 inline constexpr std::string_view TerminalKill        = "terminal/kill";
 inline constexpr std::string_view TerminalRelease     = "terminal/release";
+
+// Generic JSON-RPC request cancellation (stabilized RFD, 2026-06-29). Either
+// side may send this notification to ask the peer to cancel an outstanding
+// request BY its JSON-RPC id, without a method-specific cancel. This is
+// orthogonal to session/cancel (which cancels a whole turn); $/cancel_request
+// targets a single in-flight request id.
+inline constexpr std::string_view CancelRequest       = "$/cancel_request";      // notification
 } // namespace method
+
+//==============================================================================
+//  $/cancel_request  (notification)
+//
+//    params: { "id": <RequestId> }  — the JSON-RPC id of the request to cancel.
+//    The id is left as raw Json since JSON-RPC ids may be a number or a string.
+//==============================================================================
+struct CancelRequestParams {
+    Json id;                       // the request id to cancel (number or string)
+    Json meta = Json::object();
+};
+template <> struct CodecOf<CancelRequestParams> {
+    static Codec<CancelRequestParams> get() {
+        return record<CancelRequestParams>(
+            required("id",    &CancelRequestParams::id, CodecOf<Json>::get()),
+            meta("_meta", &CancelRequestParams::meta));
+    }
+};
 
 //==============================================================================
 //  initialize

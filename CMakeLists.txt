@@ -8,6 +8,12 @@ project(acp-cpp
 # from this library's semver. Bump only on breaking protocol changes.
 set(ACP_PROTOCOL_VERSION 1 CACHE STRING "ACP wire protocol version")
 
+# ACP v2 is a Draft (announced 2026-07-20). The spec REQUIRES gating v2 behind
+# both version negotiation and a build feature flag, and forbids shipping it by
+# default. OFF keeps the negotiated ceiling at v1 (stable). ON raises the
+# ceiling so a v2-capable peer can agree on v2 (defines ACP_ENABLE_V2_DRAFT).
+option(ACP_ENABLE_V2_DRAFT "Advertise/negotiate Draft ACP v2 (opt-in, not for production)" OFF)
+
 # -----------------------------------------------------------------------------
 # C++ settings
 # -----------------------------------------------------------------------------
@@ -73,6 +79,11 @@ target_link_libraries(acp INTERFACE nlohmann_json::nlohmann_json)
 # limit (C1128). /bigobj raises it. Propagated to every consumer.
 target_compile_options(acp INTERFACE $<$<CXX_COMPILER_ID:MSVC>:/bigobj>)
 
+# Opt-in Draft v2 negotiation ceiling (see the ACP_ENABLE_V2_DRAFT option).
+if (ACP_ENABLE_V2_DRAFT)
+    target_compile_definitions(acp INTERFACE ACP_ENABLE_V2_DRAFT=1)
+endif()
+
 # -----------------------------------------------------------------------------
 # Install (covers both the hand-written headers and the generated version.hpp).
 # -----------------------------------------------------------------------------
@@ -130,6 +141,20 @@ if (ACP_BUILD_TESTS)
     add_executable(acp_schema_conformance tests/schema_conformance.cpp)
     target_link_libraries(acp_schema_conformance PRIVATE acp::acp)
     add_test(NAME schema_conformance COMMAND acp_schema_conformance)
+
+    add_executable(acp_cancel_request tests/cancel_request.cpp)
+    target_link_libraries(acp_cancel_request PRIVATE acp::acp)
+    if (NOT WIN32)
+        target_link_libraries(acp_cancel_request PRIVATE pthread)
+    endif()
+    add_test(NAME cancel_request COMMAND acp_cancel_request)
+
+    add_executable(acp_bench_transport tests/bench_transport.cpp)
+    target_link_libraries(acp_bench_transport PRIVATE acp::acp)
+    if (NOT WIN32)
+        target_link_libraries(acp_bench_transport PRIVATE pthread)
+    endif()
+    add_test(NAME bench_transport COMMAND acp_bench_transport)
 endif()
 
 # -----------------------------------------------------------------------------
