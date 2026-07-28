@@ -28,6 +28,24 @@
 #  include <unistd.h>
 #endif
 
+// A wall-clock throughput floor is meaningless under a sanitizer: ASan and
+// TSan add 2-20x runtime overhead, so a native-tuned frames/s floor trips
+// even though nothing regressed. Detect a sanitized build and keep the
+// benchmark running (still exercises the transport for the sanitizer) while
+// skipping the perf assertion. Covers both compiler feature macros (Clang)
+// and the GCC/Clang predefined __SANITIZE_*__ macros.
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+#  define ACP_BENCH_UNDER_SANITIZER 1
+#elif defined(__has_feature)
+#  if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer) || \
+      __has_feature(memory_sanitizer)
+#    define ACP_BENCH_UNDER_SANITIZER 1
+#  endif
+#endif
+#ifndef ACP_BENCH_UNDER_SANITIZER
+#  define ACP_BENCH_UNDER_SANITIZER 0
+#endif
+
 using namespace acp;
 using clock_t_ = std::chrono::steady_clock;
 
@@ -120,8 +138,16 @@ int main() {
     // Regression floor: anything below this means the hot path has rotted.
     // (Real hardware is far above this; the floor just guards against a 5-10x
     // regression such as re-introducing per-frame flush through std::ostream.)
+    // Skipped under sanitizers, whose 2-20x overhead makes the wall-clock
+    // floor a false failure — the benchmark still runs to feed ASan/TSan.
+#if ACP_BENCH_UNDER_SANITIZER
+    std::cout << "  (throughput floor skipped: sanitized build)\n";
+    (void)fps_unbatched;
+    (void)fps_batched;
+#else
     assert(fps_unbatched > 50'000.0 && "unbatched throughput regressed");
     assert(fps_batched   > 50'000.0 && "batched throughput regressed");
+#endif
 
     std::cout << "bench_transport OK\n";
     return 0;
