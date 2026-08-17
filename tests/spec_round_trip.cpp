@@ -3,7 +3,7 @@
 #include <acp/methods.hpp>
 #include <acp/updates.hpp>
 
-#include <cassert>
+#include "agtest.hpp"
 #include <iostream>
 
 using namespace acp;
@@ -20,7 +20,7 @@ static void round_trip(const T& v, const char* label) {
     }
 }
 
-int main() {
+TEST_CASE("spec_round_trip") {
     // initialize
     {
         InitializeParams p;
@@ -260,5 +260,4 @@ int main() {
     }
 
     std::cout << "all spec round-trips OK\n";
-    return 0;
 }

@@ -12,7 +12,7 @@
 //
 #include <acp/acp.hpp>
 
-#include <cassert>
+#include "agtest.hpp"
 #include <condition_variable>
 #include <deque>
 #include <iostream>
@@ -51,7 +51,7 @@ private:
 
 using namespace acp;
 
-int main() {
+TEST_CASE("async_prompt") {
     Mailbox client_to_agent, agent_to_client;
 
     std::shared_ptr<ClientConnection> agent_side;
@@ -142,5 +142,4 @@ int main() {
     if (worker.joinable()) worker.join();
     for (auto& t : pumps) if (t.joinable()) t.join();
     std::cout << "async_prompt deferred-response OK\n";
-    return 0;
 }

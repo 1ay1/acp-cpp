@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <acp/content.hpp>
 
-#include <cassert>
+#include "agtest.hpp"
 #include <iostream>
 
-int main() {
+TEST_CASE("content_smoke") {
     using namespace acp;
 
     // Text
@@ -62,5 +62,4 @@ int main() {
     }
 
     std::cout << "content round-trip OK\n";
-    return 0;
 }

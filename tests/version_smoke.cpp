@@ -5,11 +5,11 @@
 #include <acp/version.hpp>
 #include <acp/caps.hpp>
 
-#include <cassert>
+#include "agtest.hpp"
 #include <cstdio>
 #include <cstring>
 
-int main() {
+TEST_CASE("version_smoke") {
     using namespace acp;
 
     // semver components are non-negative and non-zero in aggregate
@@ -49,5 +49,4 @@ int main() {
     std::printf("acp-cpp %s, protocol v%d (major=%d minor=%d patch=%d)\n",
                 kLibraryVersion, kProtocolVersion,
                 kLibraryVersionMajor, kLibraryVersionMinor, kLibraryVersionPatch);
-    return 0;
 }

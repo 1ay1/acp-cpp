@@ -10,7 +10,7 @@
 //
 #include <acp/codec.hpp>
 
-#include <cassert>
+#include "agtest.hpp"
 #include <iostream>
 #include <string>
 
@@ -76,7 +76,7 @@ template <> struct CodecOf<test::Color> {
 };
 } // namespace acp
 
-int main() {
+TEST_CASE("kernel_smoke") {
     using namespace acp;
 
     // --- Primitive round-trip -----------------------------------------------
@@ -157,5 +157,4 @@ int main() {
     }
 
     std::cout << "kernel smoke test OK\n";
-    return 0;
 }

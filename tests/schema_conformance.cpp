@@ -13,7 +13,7 @@
 //
 #include <acp/acp.hpp>
 
-#include <cassert>
+#include "agtest.hpp"
 #include <iostream>
 #include <string>
 
@@ -23,7 +23,7 @@ static void check(bool ok, const char* what) {
     if (!ok) { std::cerr << "FAIL: " << what << "\n"; std::abort(); }
 }
 
-int main() {
+TEST_CASE("schema_conformance") {
     // ---- protocol version is exactly 1 ------------------------------------
     check(kProtocolVersion == 1, "kProtocolVersion == 1");
 
@@ -88,5 +88,4 @@ int main() {
        "CreateTerminalParams rt");
 
     std::cout << "schema conformance OK\n";
-    return 0;
 }

@@ -12,7 +12,7 @@
 #include <acp/acp.hpp>
 
 #include <atomic>
-#include <cassert>
+#include "agtest.hpp"
 #include <condition_variable>
 #include <deque>
 #include <iostream>
@@ -47,7 +47,7 @@ private:
 
 using namespace acp;
 
-int main() {
+TEST_CASE("cancel_request") {
     Mailbox client_to_agent, agent_to_client;
 
     // ---- AGENT side: record the cancelled id via on_cancel_request ---------
@@ -130,5 +130,4 @@ int main() {
     for (auto& t : pumps) if (t.joinable()) t.join();
 
     std::cout << "cancel_request OK\n";
-    return 0;
 }

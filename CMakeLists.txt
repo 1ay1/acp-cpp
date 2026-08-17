@@ -101,54 +101,43 @@ install(DIRECTORY "${ACP_GENERATED_INCLUDE_DIR}/acp/"
 option(ACP_BUILD_TESTS "Build acp-cpp tests" ON)
 if (ACP_BUILD_TESTS)
     enable_testing()
-    add_executable(acp_version_smoke tests/version_smoke.cpp)
-    target_link_libraries(acp_version_smoke PRIVATE acp::acp)
-    add_test(NAME version_smoke COMMAND acp_version_smoke)
 
-    add_executable(acp_kernel_smoke tests/kernel_smoke.cpp)
-    target_link_libraries(acp_kernel_smoke PRIVATE acp::acp)
-    add_test(NAME kernel_smoke COMMAND acp_kernel_smoke)
+    # doctest — single test binary. Every test is a TEST_CASE auto-registered
+    # into acp_tests instead of ~10 separate executables. Matches the
+    # monorepo-wide single-binary test model.
+    FetchContent_Declare(
+        doctest
+        GIT_REPOSITORY https://github.com/doctest/doctest.git
+        GIT_TAG        v2.4.11
+        GIT_SHALLOW    TRUE
+    )
+    set(DOCTEST_WITH_TESTS OFF CACHE INTERNAL "")
+    set(DOCTEST_NO_INSTALL ON CACHE INTERNAL "")
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE INTERNAL "")
+    FetchContent_MakeAvailable(doctest)
+    unset(CMAKE_POLICY_VERSION_MINIMUM CACHE)
 
-    add_executable(acp_content_smoke tests/content_smoke.cpp)
-    target_link_libraries(acp_content_smoke PRIVATE acp::acp)
-    add_test(NAME content_smoke COMMAND acp_content_smoke)
-
-    add_executable(acp_spec_round_trip tests/spec_round_trip.cpp)
-    target_link_libraries(acp_spec_round_trip PRIVATE acp::acp)
-    add_test(NAME spec_round_trip COMMAND acp_spec_round_trip)
-
-    add_executable(acp_loopback tests/loopback.cpp)
-    target_link_libraries(acp_loopback PRIVATE acp::acp)
+    add_executable(acp_tests
+        tests/test_main.cpp
+        tests/version_smoke.cpp
+        tests/kernel_smoke.cpp
+        tests/content_smoke.cpp
+        tests/spec_round_trip.cpp
+        tests/loopback.cpp
+        tests/async_prompt.cpp
+        tests/engine_features.cpp
+        tests/schema_conformance.cpp
+        tests/cancel_request.cpp
+    )
+    target_link_libraries(acp_tests PRIVATE acp::acp doctest::doctest)
     if (NOT WIN32)
-        target_link_libraries(acp_loopback PRIVATE pthread)
+        target_link_libraries(acp_tests PRIVATE pthread)
     endif()
-    add_test(NAME loopback COMMAND acp_loopback)
+    include(${doctest_SOURCE_DIR}/scripts/cmake/doctest.cmake)
+    doctest_discover_tests(acp_tests)
 
-    add_executable(acp_async_prompt tests/async_prompt.cpp)
-    target_link_libraries(acp_async_prompt PRIVATE acp::acp)
-    if (NOT WIN32)
-        target_link_libraries(acp_async_prompt PRIVATE pthread)
-    endif()
-    add_test(NAME async_prompt COMMAND acp_async_prompt)
-
-    add_executable(acp_engine_features tests/engine_features.cpp)
-    target_link_libraries(acp_engine_features PRIVATE acp::acp)
-    if (NOT WIN32)
-        target_link_libraries(acp_engine_features PRIVATE pthread)
-    endif()
-    add_test(NAME engine_features COMMAND acp_engine_features)
-
-    add_executable(acp_schema_conformance tests/schema_conformance.cpp)
-    target_link_libraries(acp_schema_conformance PRIVATE acp::acp)
-    add_test(NAME schema_conformance COMMAND acp_schema_conformance)
-
-    add_executable(acp_cancel_request tests/cancel_request.cpp)
-    target_link_libraries(acp_cancel_request PRIVATE acp::acp)
-    if (NOT WIN32)
-        target_link_libraries(acp_cancel_request PRIVATE pthread)
-    endif()
-    add_test(NAME cancel_request COMMAND acp_cancel_request)
-
+    # bench_transport is a throughput benchmark (timing loop, not assertions);
+    # kept standalone.
     add_executable(acp_bench_transport tests/bench_transport.cpp)
     target_link_libraries(acp_bench_transport PRIVATE acp::acp)
     if (NOT WIN32)

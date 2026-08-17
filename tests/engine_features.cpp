@@ -13,7 +13,7 @@
 #include <acp/acp.hpp>
 #include <acp/coro.hpp>
 
-#include <cassert>
+#include "agtest.hpp"
 #include <chrono>
 #include <iostream>
 #include <string>
@@ -156,7 +156,7 @@ static void test_coroutine() {
     std::cout << "  [ok] coroutine Task<T> over future\n";
 }
 
-int main() {
+TEST_CASE("engine_features") {
     test_codec_caching();
     test_timeout();
     test_timed_wait_blocks();
@@ -167,5 +167,4 @@ int main() {
     test_version_negotiation();
     test_coroutine();
     std::cout << "engine features OK\n";
-    return 0;
 }

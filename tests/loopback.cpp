@@ -7,7 +7,7 @@
 //
 #include <acp/acp.hpp>
 
-#include <cassert>
+#include "agtest.hpp"
 #include <condition_variable>
 #include <deque>
 #include <iostream>
@@ -49,7 +49,7 @@ private:
 
 using namespace acp;
 
-int main() {
+TEST_CASE("loopback") {
     Mailbox client_to_agent;   // client writes here, agent reads
     Mailbox agent_to_client;   // agent writes here, client reads
 
@@ -182,5 +182,4 @@ int main() {
     for (auto& t : pumps) if (t.joinable()) t.join();
 
     std::cout << "loopback integration OK\n";
-    return 0;
 }
