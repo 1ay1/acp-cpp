@@ -98,7 +98,17 @@ install(DIRECTORY "${ACP_GENERATED_INCLUDE_DIR}/acp/"
 # -----------------------------------------------------------------------------
 # Tests
 # -----------------------------------------------------------------------------
-option(ACP_BUILD_TESTS "Build acp-cpp tests" ON)
+# Default ON only when acp-cpp is the top-level project (standalone). Embedded
+# via add_subdirectory (e.g. by agentty) they default OFF so the parent never
+# pulls acp-cpp's tests/examples into its build — each repo runs its own tests.
+if(NOT DEFINED PROJECT_IS_TOP_LEVEL)
+    if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+        set(PROJECT_IS_TOP_LEVEL ON)
+    else()
+        set(PROJECT_IS_TOP_LEVEL OFF)
+    endif()
+endif()
+option(ACP_BUILD_TESTS "Build acp-cpp tests" ${PROJECT_IS_TOP_LEVEL})
 if (ACP_BUILD_TESTS)
     enable_testing()
 
@@ -149,7 +159,7 @@ endif()
 # -----------------------------------------------------------------------------
 # Examples
 # -----------------------------------------------------------------------------
-option(ACP_BUILD_EXAMPLES "Build acp-cpp examples" ON)
+option(ACP_BUILD_EXAMPLES "Build acp-cpp examples" ${PROJECT_IS_TOP_LEVEL})
 if (ACP_BUILD_EXAMPLES)
     # echo_agent is portable (pure stdio).
     add_executable(echo_agent examples/echo_agent.cpp)
