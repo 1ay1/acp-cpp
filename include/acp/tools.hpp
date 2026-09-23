@@ -137,6 +137,14 @@ template <> struct CodecOf<ToolCallLocation> {
 struct ToolCall {
     ToolCallId toolCallId;
     std::string title;
+    // Programmatic name of the tool being invoked — "read", "bash", … as
+    // opposed to `title`, which is prose for a human ("Reading src/main.cpp").
+    //
+    // Stabilised in spec 1.8.0. Optional and nullable: omitting it and
+    // sending null both mean "no tool name available", so a client that
+    // groups or filters by tool identity has to tolerate its absence.
+    // Sending it is strictly better than not — a title is not parseable.
+    Maybe<std::string> name;
     ToolKind       kind   = ToolKind::Other;
     ToolCallStatus status = ToolCallStatus::Pending;
     List<ToolCallContent>  content;
@@ -150,6 +158,7 @@ template <> struct CodecOf<ToolCall> {
         return record<ToolCall>(
             required ("toolCallId", &ToolCall::toolCallId),
             required ("title",      &ToolCall::title),
+            optional ("name",       &ToolCall::name),
             defaulted("kind",       &ToolCall::kind,      ToolKind::Other),
             defaulted("status",     &ToolCall::status,    ToolCallStatus::Pending),
             defaulted("content",    &ToolCall::content,   List<ToolCallContent>{}),
@@ -167,6 +176,7 @@ template <> struct CodecOf<ToolCall> {
 struct ToolCallUpdate {
     ToolCallId toolCallId;
     Maybe<std::string>      title;
+    Maybe<std::string>      name;    // see ToolCall::name (spec 1.8.0)
     Maybe<ToolKind>         kind;
     Maybe<ToolCallStatus>   status;
     Maybe<List<ToolCallContent>>  content;
@@ -180,6 +190,7 @@ template <> struct CodecOf<ToolCallUpdate> {
         return record<ToolCallUpdate>(
             required ("toolCallId", &ToolCallUpdate::toolCallId),
             optional ("title",      &ToolCallUpdate::title),
+            optional ("name",       &ToolCallUpdate::name),
             optional ("kind",       &ToolCallUpdate::kind),
             optional ("status",     &ToolCallUpdate::status),
             optional ("content",    &ToolCallUpdate::content),
