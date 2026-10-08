@@ -35,6 +35,10 @@ enum class Color { Red, Green, Blue };
 struct UserIdTag;
 using UserId = acp::Newtype<UserIdTag, std::string>;
 
+// These test types' codecs are specialised in acp's table below; this tells
+// jsonrpc to look there for types declared in test::.
+JSONRPC_PROTOCOL_CODECS(acp::CodecOf)
+
 } // namespace test
 
 namespace acp {

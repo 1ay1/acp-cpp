@@ -1,19 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// acp/acp.hpp — single include for the whole library.
+// acp/acp.hpp — the whole library.
 //
-//   The library is structured in layers; each may also be included
-//   individually if you want a smaller compile.
+//   acp-cpp is the Agent Client Protocol as types, on jsonrpc-cpp:
 //
-//   Layer 1 (algebra):   core.hpp, codec.hpp
-//   Layer 2 (schema):    ids.hpp, content.hpp, tools.hpp,
-//                        session_types.hpp, updates.hpp, caps.hpp,
-//                        methods.hpp
-//   Layer 3 (engine):    rpc.hpp
-//   Layer 4 (transports):stdio.hpp
-//   Layer 5 (facade):    agent.hpp  (use as a client),
-//                        client.hpp (use as an agent)
+//     the algebra    core.hpp, codec.hpp        (re-exported from jsonrpc-cpp)
+//     the schema     ids.hpp, content.hpp, tools.hpp, session_types.hpp,
+//                    updates.hpp, caps.hpp, methods.hpp
+//     the protocol   protocol.hpp: every method as a jsonrpc Method/Note type,
+//                    by direction (to_agent::, to_client::)
 //
+//   It is a passive library: no threads, transports, futures or clocks. The
+//   host owns a jsonrpc::Engine per connection and drives it:
+//
+//       acp::Engine e;
+//       auto [id, fx] = acp::request<acp::to_agent::Initialize>(e, params);
+//       ... fx = acp::step(e, acp::Received{line}); ...
+//
+//   and dispatches the peer's calls with an acp::Router<Ctx>.
 #pragma once
 
 #include <acp/version.hpp>
@@ -28,8 +32,4 @@
 #include <acp/caps.hpp>
 #include <acp/methods.hpp>
 
-#include <acp/rpc.hpp>
-#include <acp/stdio.hpp>
-
-#include <acp/agent.hpp>
-#include <acp/client.hpp>
+#include <acp/protocol.hpp>
