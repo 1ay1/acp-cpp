@@ -31,16 +31,17 @@
 //
 #pragma once
 
+#include <acp/runtime.hpp>
 #include <acp/rpc.hpp>
 
 #include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <istream>
+#include <memory>
 #include <mutex>
 #include <ostream>
 #include <string>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -124,23 +125,22 @@ public:
     void start(RpcEngine& engine) {
         engine_ = &engine;
         running_.store(true, std::memory_order_release);
-        reader_ = std::thread([this, &engine] { read_loop(engine); });
+        reader_ = runtime().spawn("acp.fd.reader",
+            [this, &engine](std::stop_token) { read_loop(engine); });
     }
 
-    // Block until the reader thread finishes (i.e. until EOF on the input fd).
+    // Block until the reader job finishes (i.e. until EOF on the input fd).
     void join() {
-        if (reader_.joinable() &&
-            reader_.get_id() != std::this_thread::get_id())
-            reader_.join();
+        if (reader_) reader_->wait();
+        reader_.reset();
     }
 
     void stop() {
         running_.store(false, std::memory_order_release);
         // We cannot portably interrupt a blocking read(2); the peer closing the
-        // descriptor (EOF) wakes the reader. join() does the rest.
-        if (reader_.joinable() &&
-            reader_.get_id() != std::this_thread::get_id())
-            reader_.join();
+        // descriptor (EOF) wakes the reader. Close it before stop().
+        if (reader_) reader_->stop();
+        reader_.reset();
     }
 
     bool running() const noexcept { return running_.load(std::memory_order_acquire); }
@@ -276,7 +276,7 @@ private:
     int  in_fd_;
     int  out_fd_;
     std::mutex   write_mu_;        // serialises the actual write(2)/writev(2)
-    std::thread  reader_;
+    std::unique_ptr<Runtime::Job> reader_;
     std::atomic<bool> running_{false};
     RpcEngine*   engine_{nullptr};
 };
@@ -311,14 +311,15 @@ public:
         };
     }
 
-    // Run the read pump on a dedicated thread. The pump terminates on EOF or
+    // Run the read pump as a job on the installed acp::Runtime. The pump terminates on EOF or
     // when stop() is called. On natural EOF (peer closed) the engine's
     // on_transport_closed() fires, failing all in-flight requests with
     // errc::ConnectionLost and invoking its error callback.
     void start(RpcEngine& engine) {
         engine_ = &engine;
         running_.store(true, std::memory_order_release);
-        reader_ = std::thread([this, &engine] {
+        reader_ = runtime().spawn("acp.stdio.reader",
+            [this, &engine](std::stop_token) {
             std::string line;
             while (running_.load(std::memory_order_acquire)) {
                 if (!std::getline(in_, line)) break;        // EOF or error
@@ -333,20 +334,18 @@ public:
         });
     }
 
-    // Block until the reader thread finishes (i.e. until EOF on the stream).
+    // Block until the reader job finishes (i.e. until EOF on the stream).
     void join() {
-        if (reader_.joinable() &&
-            reader_.get_id() != std::this_thread::get_id())
-            reader_.join();
+        if (reader_) reader_->wait();
+        reader_.reset();
     }
 
     void stop() {
         running_.store(false, std::memory_order_release);
         // We can't easily interrupt std::getline; users should close the stream
-        // (e.g. send EOF) to wake the reader. join() does the rest.
-        if (reader_.joinable() &&
-            reader_.get_id() != std::this_thread::get_id())
-            reader_.join();
+        // (e.g. send EOF) to wake the reader.
+        if (reader_) reader_->stop();
+        reader_.reset();
     }
 
     bool running() const noexcept { return running_.load(std::memory_order_acquire); }
@@ -355,7 +354,7 @@ private:
     std::istream& in_;
     std::ostream& out_;
     std::mutex    write_mu_;
-    std::thread   reader_;
+    std::unique_ptr<Runtime::Job> reader_;
     std::atomic<bool> running_{false};
     RpcEngine*    engine_{nullptr};
 };
