@@ -1,0 +1,13 @@
+# acp-cpp — concurrency allowlist (checked by agentty's concurrency_banlist_acp).
+#
+# acp-cpp starts no threads: readers, deadlines and awaits run as jobs on the
+# acp::Runtime the host installs. Entries are the standalone fallback in
+# runtime.hpp (the one place a thread is named) and the locks/atomics that
+# make the engine and transports safe to call from the host's threads.
+# std::async(launch::deferred) starts no thread: it is a lazy decode step.
+
+include/acp/runtime.hpp: thread detach mutex atomic
+include/acp/rpc.hpp: async mutex atomic
+include/acp/agent.hpp: async
+include/acp/coro.hpp: mutex atomic
+include/acp/stdio.hpp: mutex atomic thread_local const_cast
