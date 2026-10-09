@@ -1,1 +1,0 @@
-# acp-cpp has no runtime: no grants. (docs/PROTOCOL_LIBRARIES.md R1)
