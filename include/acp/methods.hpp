@@ -49,6 +49,7 @@ inline constexpr std::string_view Logout           = "logout";
 inline constexpr std::string_view SessionNew       = "session/new";
 inline constexpr std::string_view SessionLoad      = "session/load";
 inline constexpr std::string_view SessionResume    = "session/resume";
+inline constexpr std::string_view SessionFork      = "session/fork";             // unstable
 inline constexpr std::string_view SessionClose     = "session/close";
 inline constexpr std::string_view SessionDelete    = "session/delete";
 inline constexpr std::string_view SessionList      = "session/list";
@@ -197,6 +198,9 @@ template <> struct CodecOf<LoadSessionParams> {
 };
 
 using ResumeSessionParams = LoadSessionParams;
+// session/fork: a new session starting from a copy of `sessionId`'s history.
+// Same fields as load (sessionId, cwd, mcpServers).
+using ForkSessionParams = LoadSessionParams;
 
 // session/load and session/resume answer with the same shape: the restored
 // session's initial mode and config state (LoadSessionResponse,

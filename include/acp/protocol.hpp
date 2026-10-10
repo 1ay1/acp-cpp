@@ -38,6 +38,8 @@ using Logout           = Method<"logout",                     Unit,             
 using SessionNew       = Method<"session/new",                NewSessionParams,      NewSessionResult>;
 using SessionLoad      = Method<"session/load",               LoadSessionParams,     LoadSessionResult>;
 using SessionResume    = Method<"session/resume",             ResumeSessionParams,   ResumeSessionResult>;
+// Unstable in the schema; Zed and the Claude adapter use it.
+using SessionFork      = Method<"session/fork",               ForkSessionParams,     NewSessionResult>;
 using SessionClose     = Method<"session/close",              CloseSessionParams,    Unit>;
 using SessionDelete    = Method<"session/delete",             DeleteSessionParams,   Unit>;
 using SessionList      = Method<"session/list",               ListSessionsParams,    ListSessionsResult>;

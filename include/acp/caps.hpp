@@ -16,6 +16,7 @@
 
 #include <acp/session_types.hpp>
 
+#include <map>
 #include <stdexcept>
 
 namespace acp {
@@ -114,15 +115,31 @@ struct ClientCapabilities {
     FsCapabilities fs{};
     bool terminal = false;
     ClientSessionCapabilities session{};
+    bool authTerminal = false;            // auth.terminal: runs terminal login methods
     Json meta = Json::object();           // custom extension capability declarations
 };
 template <> struct CodecOf<ClientCapabilities> {
     static Codec<ClientCapabilities> get() {
-        return record<ClientCapabilities>(
+        auto base = record<ClientCapabilities>(
             defaulted("fs",       &ClientCapabilities::fs,       FsCapabilities{}),
             defaulted("terminal", &ClientCapabilities::terminal, false),
             defaulted("session",  &ClientCapabilities::session,  ClientSessionCapabilities{}),
             meta("_meta",    &ClientCapabilities::meta));
+        return {
+            [base](const ClientCapabilities& c) -> Json {
+                Json j = base.encode(c);
+                if (c.authTerminal) j["auth"] = Json{{"terminal", true}};
+                return j;
+            },
+            [base](const Json& j) -> ClientCapabilities {
+                ClientCapabilities c = base.decode(j);
+                if (j.is_object() && j.contains("auth") && j["auth"].is_object()) {
+                    const Json& a = j["auth"];
+                    c.authTerminal = a.contains("terminal") && a["terminal"].is_boolean()
+                                  && a["terminal"].get<bool>();
+                }
+                return c;
+            }};
     }
 };
 
@@ -173,6 +190,7 @@ struct SessionCapabilities {
     Maybe<Unit> close;
     Maybe<Unit> list;
     Maybe<Unit> additionalDirectories;
+    Maybe<Unit> fork;                  // unstable session/fork
 };
 
 template <> struct CodecOf<SessionCapabilities> {
@@ -186,7 +204,8 @@ template <> struct CodecOf<SessionCapabilities> {
             optional("resume",                &SessionCapabilities::resume),
             optional("close",                 &SessionCapabilities::close),
             optional("list",                  &SessionCapabilities::list),
-            optional("additionalDirectories", &SessionCapabilities::additionalDirectories));
+            optional("additionalDirectories", &SessionCapabilities::additionalDirectories),
+            optional("fork",                  &SessionCapabilities::fork));
     }
 };
 
@@ -217,15 +236,42 @@ struct AuthMethod {
     std::string id;
     std::string name;
     Maybe<std::string> description;
-    std::string type = "agent";    // default per spec
+    std::string type = "agent";    // "agent" (default) | "terminal"
+    // terminal only: the editor runs the agent binary with these args and
+    // env in an interactive terminal, then retries.
+    List<std::string> args;
+    std::map<std::string, std::string> env;
+    Json meta = Json::object();
 };
 template <> struct CodecOf<AuthMethod> {
     static Codec<AuthMethod> get() {
-        return record<AuthMethod>(
-            required ("id",          &AuthMethod::id),
-            required ("name",        &AuthMethod::name),
-            optional ("description", &AuthMethod::description),
-            defaulted("type",        &AuthMethod::type, std::string{"agent"}));
+        return {
+            [](const AuthMethod& m) -> Json {
+                Json j{{"id", m.id}, {"name", m.name}};
+                if (m.description) j["description"] = *m.description;
+                if (m.type != "agent") j["type"] = m.type;
+                if (m.type == "terminal") {
+                    if (!m.args.empty()) j["args"] = m.args;
+                    if (!m.env.empty())  j["env"]  = m.env;
+                }
+                if (!m.meta.empty()) j["_meta"] = m.meta;
+                return j;
+            },
+            [](const Json& j) -> AuthMethod {
+                if (!j.is_object()) throw CodecError("AuthMethod: expected object");
+                AuthMethod m;
+                m.id   = j.at("id").get<std::string>();
+                m.name = j.at("name").get<std::string>();
+                if (j.contains("description") && j["description"].is_string())
+                    m.description = Just(j["description"].get<std::string>());
+                m.type = j.value("type", std::string{"agent"});
+                if (j.contains("args") && j["args"].is_array())
+                    m.args = j["args"].get<List<std::string>>();
+                if (j.contains("env") && j["env"].is_object())
+                    m.env = j["env"].get<std::map<std::string, std::string>>();
+                if (j.contains("_meta") && j["_meta"].is_object()) m.meta = j["_meta"];
+                return m;
+            }};
     }
 };
 
