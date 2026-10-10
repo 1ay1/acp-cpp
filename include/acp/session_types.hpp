@@ -316,13 +316,15 @@ struct AvailableCommand {
     std::string name;
     std::string description;
     Maybe<AvailableCommandInput> input;
+    Json meta = Json::object();
 };
 template <> struct CodecOf<AvailableCommand> {
     static Codec<AvailableCommand> get() {
         return record<AvailableCommand>(
             required ("name",        &AvailableCommand::name),
             required ("description", &AvailableCommand::description),
-            optional ("input",       &AvailableCommand::input));
+            optional ("input",       &AvailableCommand::input),
+            meta("_meta",            &AvailableCommand::meta));
     }
 };
 
