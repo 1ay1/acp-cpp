@@ -116,6 +116,8 @@ struct ClientCapabilities {
     bool terminal = false;
     ClientSessionCapabilities session{};
     bool authTerminal = false;            // auth.terminal: runs terminal login methods
+    bool elicitForm   = false;            // elicitation.form present
+    bool elicitUrl    = false;            // elicitation.url present
     Json meta = Json::object();           // custom extension capability declarations
 };
 template <> struct CodecOf<ClientCapabilities> {
@@ -129,6 +131,12 @@ template <> struct CodecOf<ClientCapabilities> {
             [base](const ClientCapabilities& c) -> Json {
                 Json j = base.encode(c);
                 if (c.authTerminal) j["auth"] = Json{{"terminal", true}};
+                if (c.elicitForm || c.elicitUrl) {
+                    Json e = Json::object();
+                    if (c.elicitForm) e["form"] = Json::object();
+                    if (c.elicitUrl)  e["url"]  = Json::object();
+                    j["elicitation"] = std::move(e);
+                }
                 return j;
             },
             [base](const Json& j) -> ClientCapabilities {
@@ -137,6 +145,11 @@ template <> struct CodecOf<ClientCapabilities> {
                     const Json& a = j["auth"];
                     c.authTerminal = a.contains("terminal") && a["terminal"].is_boolean()
                                   && a["terminal"].get<bool>();
+                }
+                if (j.is_object() && j.contains("elicitation") && j["elicitation"].is_object()) {
+                    const Json& e = j["elicitation"];
+                    c.elicitForm = e.contains("form") && e["form"].is_object();
+                    c.elicitUrl  = e.contains("url") && e["url"].is_object();
                 }
                 return c;
             }};

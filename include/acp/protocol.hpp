@@ -67,6 +67,14 @@ using TerminalRelease     = Method<"terminal/release",           TerminalRelease
 // (the stabilised $/cancel_request RFD). `id` is the request's wire id.
 using CancelRequest = Note<"$/cancel_request", CancelRequestParams>;
 
+// elicitation/create (v1.11), agent -> client. Form mode only here: a
+// restricted JSON Schema the editor renders as a form. Params and result are
+// kept as JSON: the agent relays an MCP server's request, which has the same
+// schema language, and the client's answer goes back unchanged.
+namespace to_client {
+using ElicitationCreate = Method<"elicitation/create", Json, Json>;
+}
+
 // The engine and its vocabulary, under acp:: for protocol code.
 using jsonrpc::Engine;
 using jsonrpc::Router;
