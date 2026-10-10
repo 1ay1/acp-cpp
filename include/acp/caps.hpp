@@ -76,9 +76,44 @@ template <> struct CodecOf<FsCapabilities> {
     }
 };
 
+// clientCapabilities.session (v1.11): what the client can render. Each is
+// "present means supported"; the agent MUST NOT send notice or compaction
+// updates, or boolean config options, unless the matching field is set.
+struct ClientSessionCapabilities {
+    bool compaction     = false;
+    bool notices        = false;
+    bool booleanConfig  = false;   // configOptions.boolean
+    Json meta = Json::object();
+};
+template <> struct CodecOf<ClientSessionCapabilities> {
+    static Codec<ClientSessionCapabilities> get() {
+        auto present = [](const Json& j, const char* k) {
+            return j.is_object() && j.contains(k) && j[k].is_object();
+        };
+        return {
+            [](const ClientSessionCapabilities& c) -> Json {
+                Json j = Json::object();
+                if (c.compaction) j["compaction"] = Json::object();
+                if (c.notices)    j["notices"]    = Json::object();
+                if (c.booleanConfig) j["configOptions"] = Json{{"boolean", Json::object()}};
+                if (!c.meta.empty()) j["_meta"] = c.meta;
+                return j;
+            },
+            [present](const Json& j) -> ClientSessionCapabilities {
+                ClientSessionCapabilities c;
+                c.compaction = present(j, "compaction");
+                c.notices    = present(j, "notices");
+                c.booleanConfig = present(j, "configOptions") && present(j["configOptions"], "boolean");
+                if (j.is_object() && j.contains("_meta") && j["_meta"].is_object()) c.meta = j["_meta"];
+                return c;
+            }};
+    }
+};
+
 struct ClientCapabilities {
     FsCapabilities fs{};
     bool terminal = false;
+    ClientSessionCapabilities session{};
     Json meta = Json::object();           // custom extension capability declarations
 };
 template <> struct CodecOf<ClientCapabilities> {
@@ -86,6 +121,7 @@ template <> struct CodecOf<ClientCapabilities> {
         return record<ClientCapabilities>(
             defaulted("fs",       &ClientCapabilities::fs,       FsCapabilities{}),
             defaulted("terminal", &ClientCapabilities::terminal, false),
+            defaulted("session",  &ClientCapabilities::session,  ClientSessionCapabilities{}),
             meta("_meta",    &ClientCapabilities::meta));
     }
 };

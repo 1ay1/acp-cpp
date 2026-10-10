@@ -198,6 +198,9 @@ template <> struct CodecOf<LoadSessionParams> {
 
 using ResumeSessionParams = LoadSessionParams;
 
+// session/load and session/resume answer with the same shape: the restored
+// session's initial mode and config state (LoadSessionResponse,
+// ResumeSessionResponse in the v1 schema).
 struct ResumeSessionResult {
     Maybe<SessionModeState>   modes;
     Maybe<List<ConfigOption>> configOptions;
@@ -211,6 +214,7 @@ template <> struct CodecOf<ResumeSessionResult> {
             meta("_meta",         &ResumeSessionResult::meta));
     }
 };
+using LoadSessionResult = ResumeSessionResult;
 
 struct CloseSessionParams  { SessionId sessionId; Json meta = Json::object(); };
 struct DeleteSessionParams { SessionId sessionId; Json meta = Json::object(); };
@@ -327,11 +331,20 @@ template <> struct CodecOf<SetModeParams> {
     }
 };
 
+// `value` is a select value id, or a bool for a boolean option (which the
+// client also tags `type: "boolean"`). Kept as raw JSON; read it with
+// value_string() / value_bool().
 struct SetConfigOptionParams {
     SessionId sessionId;
     std::string configId;
-    std::string value;
+    Json value;
     Json meta = Json::object();
+
+    [[nodiscard]] bool is_bool() const noexcept { return value.is_boolean(); }
+    [[nodiscard]] std::string value_string() const {
+        return value.is_string() ? value.get<std::string>() : std::string{};
+    }
+    [[nodiscard]] bool value_bool() const { return value.is_boolean() && value.get<bool>(); }
 };
 template <> struct CodecOf<SetConfigOptionParams> {
     static Codec<SetConfigOptionParams> get() {

@@ -216,23 +216,57 @@ struct ConfigOption {
     std::string id;                       // SessionConfigId
     std::string name;
     Maybe<std::string> description;
-    Maybe<std::string> category;          // "mode" | "model" | "thought_level" | _custom
-    std::string type = "select";          // only "select" today
-    std::string currentValue;             // SessionConfigValueId
-    ConfigSelectOptions options;
+    Maybe<std::string> category;          // "mode" | "model" | "model_config" | "thought_level" | _custom
+    std::string type = "select";          // "select" | "boolean"
+    std::string currentValue;             // select: SessionConfigValueId
+    bool        currentBool = false;      // boolean: the toggle state
+    ConfigSelectOptions options;          // select only
     Json meta = Json::object();
+
+    [[nodiscard]] bool is_boolean() const noexcept { return type == "boolean"; }
 };
+// Hand-written: `currentValue` is a string for select and a bool for
+// boolean, and a boolean option has no `options`.
 template <> struct CodecOf<ConfigOption> {
     static Codec<ConfigOption> get() {
-        return record<ConfigOption>(
-            required ("id",           &ConfigOption::id),
-            required ("name",         &ConfigOption::name),
-            optional ("description",  &ConfigOption::description),
-            optional ("category",     &ConfigOption::category),
-            defaulted("type",         &ConfigOption::type, std::string{"select"}),
-            required ("currentValue", &ConfigOption::currentValue),
-            required ("options",      &ConfigOption::options),
-            meta("_meta",        &ConfigOption::meta));
+        return {
+            [](const ConfigOption& o) -> Json {
+                Json j = Json::object();
+                j["id"]   = o.id;
+                j["name"] = o.name;
+                if (o.description) j["description"] = *o.description;
+                if (o.category)    j["category"]    = *o.category;
+                j["type"] = o.type;
+                if (o.is_boolean()) {
+                    j["currentValue"] = o.currentBool;
+                } else {
+                    j["currentValue"] = o.currentValue;
+                    j["options"]      = to_json(o.options);
+                }
+                if (!o.meta.empty()) j["_meta"] = o.meta;
+                return j;
+            },
+            [](const Json& j) -> ConfigOption {
+                if (!j.is_object()) throw CodecError("ConfigOption: expected object");
+                ConfigOption o;
+                o.id   = j.at("id").get<std::string>();
+                o.name = j.at("name").get<std::string>();
+                if (j.contains("description") && j["description"].is_string())
+                    o.description = Just(j["description"].get<std::string>());
+                if (j.contains("category") && j["category"].is_string())
+                    o.category = Just(j["category"].get<std::string>());
+                o.type = j.value("type", std::string{"select"});
+                const Json& cv = j.at("currentValue");
+                if (o.is_boolean()) {
+                    if (!cv.is_boolean()) throw CodecError("ConfigOption: boolean currentValue");
+                    o.currentBool = cv.get<bool>();
+                } else {
+                    o.currentValue = cv.get<std::string>();
+                    o.options = from_json<ConfigSelectOptions>(j.at("options"));
+                }
+                if (j.contains("_meta") && j["_meta"].is_object()) o.meta = j["_meta"];
+                return o;
+            }};
     }
 };
 
