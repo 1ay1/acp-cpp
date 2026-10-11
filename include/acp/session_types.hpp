@@ -124,13 +124,15 @@ struct SessionMode {
     SessionModeId id;
     std::string name;
     Maybe<std::string> description;
+    Json meta = Json::object();
 };
 template <> struct CodecOf<SessionMode> {
     static Codec<SessionMode> get() {
         return record<SessionMode>(
             required ("id",          &SessionMode::id),
             required ("name",        &SessionMode::name),
-            optional ("description", &SessionMode::description));
+            optional ("description", &SessionMode::description),
+            meta("_meta", &SessionMode::meta));
     }
 };
 
