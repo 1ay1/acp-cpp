@@ -23,6 +23,11 @@ jobs:
             compiler: clang
             cc: clang
             cxx: clang++
+            # The runner's default libstdc++ has <expected> only behind GCC's
+            # own __cpp_concepts check, which clang does not pass; libc++
+            # has it unconditionally.
+            cxxflags: -stdlib=libc++
+            apt: libc++-dev libc++abi-dev
           - os: macos-latest
             compiler: clang
             cc: clang
@@ -33,11 +38,15 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Ninja
         uses: seanmiddleditch/gha-setup-ninja@v5
+      - name: Install packages
+        if: matrix.apt
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ${{ matrix.apt }}
       - name: Configure (unix)
         if: runner.os != 'Windows'
         env:
           CC: ${{ matrix.cc }}
           CXX: ${{ matrix.cxx }}
+          CXXFLAGS: ${{ matrix.cxxflags }}
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
       - name: Configure (windows)
         if: runner.os == 'Windows'
@@ -63,10 +72,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Ninja
         uses: seanmiddleditch/gha-setup-ninja@v5
+      - name: Install libc++
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libc++-dev libc++abi-dev
       - name: Configure
         env:
           CC: clang
           CXX: clang++
+          CXXFLAGS: -stdlib=libc++
         run: cmake -S . -B build -G Ninja -DACP_SANITIZE=${{ matrix.san }}
       - name: Build
         run: cmake --build build -j

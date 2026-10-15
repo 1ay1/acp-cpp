@@ -73,7 +73,11 @@ if (ACP_BUILD_TESTS)
         GIT_SHALLOW    TRUE)
     set(DOCTEST_WITH_TESTS OFF CACHE INTERNAL "")
     set(DOCTEST_NO_INSTALL ON CACHE INTERNAL "")
+    # doctest 2.4.11 declares cmake_minimum_required(VERSION 3.0), which CMake 4
+    # refuses outright. Scoped to this one call (maya does the same).
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE INTERNAL "")
     FetchContent_MakeAvailable(doctest)
+    unset(CMAKE_POLICY_VERSION_MINIMUM CACHE)
 
     add_executable(acp_tests
         tests/test_main.cpp
